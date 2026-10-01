@@ -7,6 +7,7 @@ mod integrations;
 mod island;
 mod log;
 mod pipe;
+mod providers;
 mod secrets;
 mod settings;
 mod tray;
@@ -248,8 +249,9 @@ async fn chat_send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let settings = shared.settings.lock().unwrap().clone();
+    let target = providers::target(&settings)?;
+    claude::send(&chat, &target, &settings.model, query, context).await
 }
 
 #[tauri::command]

@@ -3,10 +3,18 @@
 import "./style.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
+import { providerDef } from "./core/providers";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
+
+/** The island's API badge tells the truth about the active provider's key. */
+async function refreshApiKey() {
+  const def = providerDef(State.settings.provider);
+  State.apiKeyPresent = !def.key || ((await Bridge.secretPresent(def.key)) ?? false);
+  State.notify();
+}
 
 async function main() {
   const root = document.getElementById("root");
@@ -22,6 +30,7 @@ async function main() {
   }
   island.applySettings();
   State.loadIntegrationTasks();
+  void refreshApiKey();
 
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
 
@@ -58,6 +67,7 @@ async function main() {
     island.applySettings();
     State.loadIntegrationTasks();
     void refreshConfigured();
+    void refreshApiKey();
   });
 
   registerHookHandlers(island);
