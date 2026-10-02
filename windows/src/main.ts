@@ -22,6 +22,17 @@ async function main() {
 
   void Sound.preload();
 
+  // Before the island exists: its canvases size their bitmaps from the pixel
+  // ratio once, so the zoom correction has to land first.
+  const dprBefore = window.devicePixelRatio || 1;
+  await Bridge.fitZoom(dprBefore);
+  // WebView2 applies the zoom a moment later; wait until the pixel ratio has
+  // actually moved (or give up after a second) so nothing is sized against the
+  // stale value.
+  for (let i = 0; i < 40 && window.devicePixelRatio === dprBefore; i++) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
   const island = new Island(root);
 
   const boot = await Bridge.boot();
@@ -32,6 +43,8 @@ async function main() {
   State.loadIntegrationTasks();
   void refreshApiKey();
 
+  island.setDock(boot?.dock ?? 0);
+  await onEvent<number>("dock", (side) => island.setDock(side));
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
@@ -58,6 +71,23 @@ async function main() {
         break;
     }
   });
+
+  // Mochi speaking up on its own: a reminder coming due, or a check-in worth
+  // an interruption. Shown even when no window of ours is in the foreground.
+  await onEvent<{ text: string; kind: string }>("nudge", ({ text }) => {
+    if (State.paused) return;
+    State.noteMessage = text;
+    // The attention chime the approvals use: a reminder has to be heard.
+    Sound.resume();
+    Sound.play("approval");
+    island.alert("note");
+    island.attention();
+    // Let it close by itself if the user never comes near it.
+    island.fsm.mouseLeft();
+  });
+
+  // Dragging the island back and forth makes Mochi dizzy.
+  await onEvent<null>("shaken", () => island.shaken());
 
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 

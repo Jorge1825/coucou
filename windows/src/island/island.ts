@@ -6,12 +6,13 @@ import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
-  islandSize,
+  islandSize, VERTICAL_W,
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
+import { isFace, isHat } from "../mochi/accessories";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
@@ -23,6 +24,11 @@ import { IslandStateMachine } from "./fsm";
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
+
+/** Characters in the last exchange: what decides whether the chat card needs more height. */
+function chatChars(): number {
+  return State.chatHistory.slice(-2).reduce((n, m) => n + m.content.length, 0);
+}
 
 /** The three views the drop sequence owns; leaving them stops the engine. */
 const UPLOAD_VIEWS: ReadonlySet<IslandViewName> = new Set(["upload", "uploading", "choose"]);
@@ -69,6 +75,7 @@ export class Island {
   // Rust starts the window at full size so the launch greeting has room.
   private collapsed = false;
   private collapseTimer: number | null = null;
+  private pickingFile = false;
   private wasInIsland = false;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
@@ -167,6 +174,7 @@ export class Island {
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
+      pickFile: () => void this.pickFile(),
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });
@@ -226,6 +234,11 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     this.fsm.onTransition = (from, to) => {
+      // Retracting from an open island: this is when it docks to the nearest
+      // screen edge. While it is open it stays wherever the user put it.
+      if ((to === "petit" || to === "hidden") && (from === "home" || from === "coucou")) {
+        void Bridge.dockNearest();
+      }
       switch (to) {
         case "hidden":
           this.setMode("hidden");
@@ -334,6 +347,11 @@ export class Island {
     this.fsm.reveal();
   }
 
+  /** Mochi waves a hand to get the user's attention (a reminder just popped up). */
+  attention() {
+    this.engine.attention();
+  }
+
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
     this.fsm.pinned = false;
@@ -379,6 +397,23 @@ export class Island {
     }
   }
 
+  /** Click on the drop zone: choose a file with the system dialog. */
+  private async pickFile() {
+    void Bridge.log(`pick: click (paused=${State.paused}, busy=${this.pickingFile})`);
+    if (State.paused || this.pickingFile) return;
+    this.pickingFile = true;
+    // The dialog takes focus away; without the pin the island would auto-close.
+    this.fsm.pinned = true;
+    try {
+      const path = await Bridge.pickFile();
+      void Bridge.log(`pick: dialog closed, chosen=${path ? "yes" : "no"}`);
+      if (path) this.swallow(path);
+    } finally {
+      this.pickingFile = false;
+      this.fsm.pinned = State.isPinned;
+    }
+  }
+
   /**
    * Mochi eats the file. Nothing here waits on the file system: the copy into
    * the inbox runs in the background and swaps the path in when it lands, so a
@@ -391,6 +426,9 @@ export class Island {
     State.chatHistory = [];
     void Bridge.chatReset();
 
+    // A drag has already activated the sequence on entry; picking a file with the
+    // dialog hasn't, and an inactive sequence draws a bar frozen at 0 %.
+    if (!UploadSeq.isActive) UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;
     this.uploadDone = false;
@@ -450,7 +488,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock, chatChars());
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -475,16 +513,34 @@ export class Island {
     const r = this.radius.value;
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
-    this.islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
-    this.islandEl.style.transform = `translateX(-50%)`;
+    // Upright (docked + retracted): round the sides facing away from the edge.
+    const upright = this.dock !== 0 && State.mode !== "expanded";
+    // The side touching the screen edge is never rounded, in any size.
+    this.islandEl.style.borderRadius = upright
+      ? this.dock < 0
+        ? `0 ${r}px ${r}px 0`
+        : `${r}px 0 0 ${r}px`
+      : this.dock < 0
+        ? `0 0 ${r}px 0`
+        : this.dock > 0
+          ? `0 0 0 ${r}px`
+          : `0 0 ${r}px ${r}px`;
+    // Centred in the window, or flush with the side it is docked to.
+    this.islandEl.style.left = `${this.anchorX(w)}px`;
+    this.islandEl.style.transform = "none";
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
-    this.miniGrid.style.left = `${w - 40 - 14.5}px`;
-    this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    if (upright && State.mode === "compact") {
+      this.miniGrid.style.left = `${w / 2 - 14.5}px`;
+      this.miniGrid.style.top = `${hh - 40 - 14.5}px`;
+    } else {
+      this.miniGrid.style.left = `${w - 40 - 14.5}px`;
+      this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    }
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
-    const rect = { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    const rect = { x: this.anchorX(w), y: 0, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
@@ -496,7 +552,19 @@ export class Island {
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
-    return { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    return { x: this.anchorX(w), y: 0, w, h: hh };
+  }
+
+  /**
+   * Left edge of an island `w` wide inside the window. The window always carries
+   * the full 640 px island flush with the screen edge when docked, so a narrower
+   * island has to hug the same side instead of floating at the window centre.
+   */
+  private anchorX(w: number): number {
+    const margin = (PANEL_W - EXPANDED_W) / 2;
+    if (this.dock < 0) return margin;
+    if (this.dock > 0) return PANEL_W - margin - w;
+    return (PANEL_W - w) / 2;
   }
 
   // ── Window collapse (hidden → tiny wake strip, zero polling) ────────────────
@@ -513,13 +581,33 @@ export class Island {
         this.collapseTimer = null;
         if (State.mode !== "hidden") return;
         this.collapsed = true;
+        this.syncDockClass();
         void Bridge.setCollapsed(true);
       }, 420);
     } else if (this.collapsed) {
       // Grow the window back before the island animates open.
       this.collapsed = false;
+      this.syncDockClass();
       void Bridge.setCollapsed(false);
     }
+  }
+
+  /** -1 / 1 = docked to the left / right screen edge, 0 = free. */
+  private dock = 0;
+
+  setDock(side: number) {
+    if (side === this.dock) return;
+    this.dock = side;
+    // Retracted shapes change with the dock, so re-target size and Mochi.
+    this.animateGeometry(false);
+    this.updateBotTargets();
+    this.applyGeometry();
+  }
+
+  /** Docked and retracted: the wake strip lies along the edge (see style.css). */
+  private syncDockClass() {
+    this.root.classList.toggle("dock-left", this.collapsed && this.dock < 0);
+    this.root.classList.toggle("dock-right", this.collapsed && this.dock > 0);
   }
 
   // ── Input ───────────────────────────────────────────────────────────────────
@@ -542,12 +630,38 @@ export class Island {
         this.cancelBotHover();
         this.engine.slap();
       }
+      this.watchForDrag(e);
+    });
+
+    // Once a file has hovered the island, the drop card is drawn on a canvas and
+    // the HTML card underneath stops taking clicks — so the "click to choose a
+    // file" of the HTML card has to be offered from here too.
+    this.islandEl.addEventListener("click", (e) => {
+      if (State.view !== "upload" || !this.uploadActive || UploadSeq.dropped) return;
+      if (this.header.el.contains(e.target as Node)) return;
+      void this.pickFile();
     });
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && State.mode === "expanded" && !State.isPinned) this.collapse();
       State.lastActivity = performance.now();
     });
+
+    window.addEventListener("mochi-remembered", () => {
+      Sound.play("approve");
+      this.engine.triggerEmote("remember");
+    });
+
+    // Without preventDefault() on dragenter/dragover the page refuses every drop
+    // (the "not allowed" cursor). The file itself is handled by Tauri's native
+    // drag-drop event below; this only tells the page that dropping is fine.
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      window.addEventListener(type, (e) => {
+        e.preventDefault();
+        const dt = (e as DragEvent).dataTransfer;
+        if (dt) dt.dropEffect = "copy";
+      });
+    }
 
     void onDragDrop((e) => this.onDragDrop(e));
 
@@ -556,6 +670,31 @@ export class Island {
     if (!IS_TAURI) {
       window.addEventListener("mousemove", (e) => this.onCursor(e.clientX, e.clientY));
     }
+  }
+
+  /**
+   * Moving the mouse more than a few px with the button held on the island's
+   * background hands the move over to Windows, so the island can be placed
+   * anywhere. Controls and text fields keep their own behaviour.
+   */
+  private watchForDrag(down: MouseEvent) {
+    if (down.button !== 0 || !IS_TAURI) return;
+    const target = down.target as HTMLElement | null;
+    if (target?.closest("button, input, textarea, select, a, [contenteditable], [data-nodrag]")) return;
+    const startX = down.screenX;
+    const startY = down.screenY;
+    const stop = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+    };
+    const move = (e: MouseEvent) => {
+      if (e.buttons !== 1) return stop();
+      if (Math.hypot(e.screenX - startX, e.screenY - startY) < 5) return;
+      stop();
+      void Bridge.beginDrag();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", stop);
   }
 
   /** Cursor in window-logical coordinates. */
@@ -636,6 +775,12 @@ export class Island {
     if (this.botHoverTimer != null) window.clearTimeout(this.botHoverTimer);
     this.botHoverTimer = null;
     this.engine.tgEs = 1;
+  }
+
+  /** The user shook the island around: same dizziness as three slaps. */
+  shaken() {
+    if (State.mode === "hidden") return;
+    this.handleDizzy();
   }
 
   /** Three slaps → dizzy + confused view for 3.3 s, then back. */
@@ -734,6 +879,11 @@ export class Island {
 
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
+    if (this.dock !== 0 && State.mode === "compact") {
+      // Upright bar: Mochi at the top, the mini grid at the bottom.
+      p.cx = VERTICAL_W / 2;
+      p.cy = 36;
+    }
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
     this.botSize.target = p.diameter / 0.6;
@@ -874,6 +1024,9 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    const { mochiHat, mochiFace } = State.settings;
+    this.engine.hat = isHat(mochiHat) ? mochiHat : "none";
+    this.engine.face = isFace(mochiFace) ? mochiFace : "none";
     State.notify();
   }
 
@@ -882,6 +1035,6 @@ export class Island {
   }
 
   get chatHeight() {
-    return chatPromptHeight(State.chatHistory.length);
+    return chatPromptHeight(State.chatHistory.length, chatChars());
   }
 }

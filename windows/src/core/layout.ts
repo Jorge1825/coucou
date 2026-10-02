@@ -36,7 +36,7 @@ export type BotStateName =
   | "sleeping"
   | "dizzy";
 
-export type BotEmoteName = "love" | "surprised" | "proud" | "wink" | "yawn" | "happy" | "annoyed";
+export type BotEmoteName = "love" | "surprised" | "proud" | "wink" | "yawn" | "happy" | "annoyed" | "remember";
 
 export type AgentLayoutMode = "none" | "grid" | "pills" | "column";
 
@@ -58,6 +58,8 @@ export const NOTCH_W = 184;
 export const NOTCH_H = 32;
 export const COMPACT_W = 288; // NOTCH_W + 104
 export const EXPANDED_W = 640;
+/** Docked to a side edge, the retracted island stands upright: this wide, COMPACT_W tall. */
+export const VERTICAL_W = 44;
 
 export const ROUNDED_CORNER = 14; // hidden / compact
 export const EXPANDED_CORNER = 22;
@@ -93,15 +95,30 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
 // owns its own constants (USC) straight from UploadSequenceEngine.swift.
 
 /** Chat view grows with the conversation â€” IslandContainer.chatPromptHeight. */
-export function chatPromptHeight(messageCount: number): number {
-  return Math.min(300, 240 + messageCount * 40);
+export function chatPromptHeight(messageCount: number, textChars = 0): number {
+  const base = Math.min(300, 240 + messageCount * 40);
+  // Past what the log shows without scrolling, grow a line (~20 px) per ~70
+  // characters, up to a bit more room — beyond that the log scrolls.
+  const overflowLines = Math.ceil(textChars / CHAT_CHARS_PER_LINE) - CHAT_VISIBLE_LINES;
+  const extra = Math.min(CHAT_MAX_EXTRA, Math.max(0, overflowLines) * CHAT_LINE_PX);
+  return base + extra;
 }
+
+const CHAT_CHARS_PER_LINE = 70;
+const CHAT_VISIBLE_LINES = 9;
+const CHAT_LINE_PX = 20;
+const CHAT_MAX_EXTRA = 60;
 
 export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  dock = 0,
+  chatChars = 0,
 ): { w: number; h: number } {
+  // Docked to a side edge, retracting turns the island on its end.
+  if (dock !== 0 && mode === "hidden") return { w: 0, h: NOTCH_W };
+  if (dock !== 0 && mode === "compact") return { w: VERTICAL_W, h: COMPACT_W };
   switch (mode) {
     case "hidden":
       // No notch to hide inside on a PC: the island retracts to zero height and
@@ -110,7 +127,7 @@ export function islandSize(
     case "compact":
       return { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
-      const h = view === "prompt" ? chatPromptHeight(chatCount) : VIEW_LAYOUTS[view].height;
+      const h = view === "prompt" ? chatPromptHeight(chatCount, chatChars) : VIEW_LAYOUTS[view].height;
       return { w: EXPANDED_W, h };
     }
   }

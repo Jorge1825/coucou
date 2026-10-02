@@ -98,6 +98,13 @@ export interface Settings {
   providerUrl: string;
   /** API format for the custom preset: "anthropic" or "openai". */
   providerFormat: string;
+  /** Accessories Mochi wears — see mochi/accessories.ts. */
+  mochiHat: string;
+  mochiFace: string;
+  /** Mochi may interrupt on its own (periodic check-in with the model). */
+  proactive: boolean;
+  /** Minutes between check-ins. */
+  proactiveMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -115,6 +122,10 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: "anthropic",
   providerUrl: "",
   providerFormat: "openai",
+  mochiHat: "none",
+  mochiFace: "none",
+  proactive: false,
+  proactiveMinutes: 30,
 };
 
 type Listener = () => void;
@@ -142,6 +153,8 @@ class AppState {
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;
+  /** Screenshot the user asked for; goes out with the next chat message, once. */
+  pendingScreen: { path: string } | null = null;
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];

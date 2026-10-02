@@ -38,7 +38,10 @@ function makeRow(): Row {
   const shimmer = h("span", { class: "tick-text shimmer" });
   const dim = h("span", {
     class: "tick-text",
-    style: "position:absolute;left:0;right:0;color:#6b7079",
+    // Explicit vertical placement matters: without a `top` the box sits at its
+    // static position, one line below the shimmering twin, and the two texts read
+    // as overlapping rows. Centred, it lines up with the twin it crossfades with.
+    style: "position:absolute;top:50%;transform:translateY(-50%);left:0;right:0;color:#6b7079",
   });
   const el = h(
     "div",

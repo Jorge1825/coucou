@@ -46,7 +46,12 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     spellcheck: "false",
   }) as HTMLInputElement;
   const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
-  const bar = h("div", { class: "chat-bar" }, input, send);
+  const look = h(
+    "button",
+    { class: "look-btn", title: "Let Mochi see my screen (once)" },
+    svg(ICONS.eye, 15, { stroke: 1.8 }),
+  );
+  const bar = h("div", { class: "chat-bar" }, input, look, send);
 
   const el = h(
     "div",
@@ -71,16 +76,30 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     onHeightChange();
 
     const file = State.droppedFile;
-    const context: ChatContext | null =
-      State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
+    // A screenshot goes out once, with the message sent right after it was taken.
+    const screen = State.pendingScreen;
+    State.pendingScreen = null;
+    const context: ChatContext | null = screen
+      ? { kind: "screen", path: screen.path }
+      : State.chatHistory.length === 1 && file
+        ? { kind: "file", name: file.name, path: file.path }
+        : null;
 
     try {
       const reply = await Bridge.chatSend(query, context);
       State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
       Sound.play("finish");
+      // Mochi saved a note or set a reminder: let the island animate it.
+      if (reply.remembered) window.dispatchEvent(new CustomEvent("mochi-remembered"));
     } catch (err) {
       State.stateOverride = null;
+      if (String(err).includes("cancelled")) {
+        // Stopped by the user: take the question back so it can be edited or resent.
+        State.chatHistory.pop();
+        input.value = query;
+        return;
+      }
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
       Sound.play("error");
@@ -89,10 +108,35 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       State.notify();
       onHeightChange();
       input.focus();
+      requestAnimationFrame(() => input.focus());
     }
   }
 
-  send.addEventListener("click", () => void submit());
+  // Nothing is captured until this is pressed — Mochi never looks on its own.
+  let capturing = false;
+  look.addEventListener("click", async () => {
+    if (capturing || sending) return;
+    capturing = true;
+    try {
+      const shot = await Bridge.captureScreen();
+      State.pendingScreen = { path: shot.path };
+      Sound.play("blip");
+    } catch (err) {
+      State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.view = "note";
+      Sound.play("error");
+    } finally {
+      capturing = false;
+      State.notify();
+      input.focus();
+    }
+  });
+
+  send.addEventListener("click", () => {
+    // While a request is in flight the button is a stop button.
+    if (sending) void Bridge.chatCancel();
+    else void submit();
+  });
   input.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") {
       e.preventDefault();
@@ -105,11 +149,20 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     el,
     sync() {
       const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
+      const wantChip = `${file?.name ?? ""}|${State.pendingScreen ? "screen" : ""}`;
       if (chipRow.dataset.label !== wantChip) {
         chipRow.dataset.label = wantChip;
         clear(chipRow);
-        if (wantChip) chipRow.append(contextChip(wantChip));
+        if (file?.name) chipRow.append(contextChip(file.name));
+        if (State.pendingScreen) {
+          const chip = contextChip("Screen — click to remove");
+          chip.classList.add("removable");
+          chip.addEventListener("click", () => {
+            State.pendingScreen = null;
+            State.notify();
+          });
+          chipRow.append(chip);
+        }
       }
 
       const thinking = State.stateOverride === "thinking";
@@ -123,7 +176,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       }
 
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
-      input.disabled = sending;
+      // readOnly, not disabled: disabling the field drops its focus, and the user
+      // would have to click it again after every message.
+      input.readOnly = sending;
+      send.title = sending ? "Stop" : "Send";
+      send.classList.toggle("stop", sending);
+      if (send.dataset.icon !== (sending ? "stop" : "send")) {
+        send.dataset.icon = sending ? "stop" : "send";
+        clear(send);
+        send.append(svg(sending ? ICONS.stop : ICONS.arrowUp, 11));
+      }
     },
     focus() {
       input.focus();

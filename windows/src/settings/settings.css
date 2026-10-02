@@ -265,3 +265,108 @@ select option {
   background: rgba(245, 165, 36, 0.13);
   color: #fbc06a;
 }
+
+/* ── Mochi section ── */
+.mochi-edit {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.mochi-preview {
+  flex: 0 0 auto;
+  border-radius: 20px;
+  background: #000;
+}
+
+.mochi-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1 1 260px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.chip.on {
+  background: #fff;
+  color: #000;
+}
+
+/* ── Memory section ── */
+.memory-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font: 400 12.5px/1.5 var(--font);
+}
+
+.memory-text:focus {
+  outline: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* ── Reminders section ── */
+.reminder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reminder {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  font: 400 12.5px var(--font);
+}
+
+.reminder .when {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.reminder .what {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.reminder button {
+  padding: 2px 9px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.memory-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font: 400 12.5px var(--font);
+}
+
+.memory-input:focus {
+  outline: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.reminder .origin {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-size: 11px;
+}

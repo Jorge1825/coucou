@@ -20,12 +20,30 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+export interface MemoryNote {
+  id: number;
+  text: string;
+  /** Local time it was saved, YYYY-MM-DDTHH:MM. */
+  created: string;
+  /** "mochi" saved it itself; "user" typed it in the settings window. */
+  source: string;
+}
+
+export interface Reminder {
+  id: number;
+  text: string;
+  /** Local time, YYYY-MM-DDTHH:MM. */
+  due: string;
+}
+
 export interface BootInfo {
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
   screen: { x: number; y: number; width: number; height: number; scale: number };
   version: string;
   hookPath: string;
+  /** -1 / 1 when docked to the left / right screen edge, 0 when free. */
+  dock: number;
 }
 
 export const Bridge = {
@@ -47,6 +65,10 @@ export const Bridge = {
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
   reposition: () => call<void>("reposition"),
+  resetPosition: () => call<void>("reset_position"),
+  beginDrag: () => call<void>("begin_drag"),
+  dockNearest: () => call<void>("dock_nearest"),
+  fitZoom: (dpr: number) => call<void>("fit_zoom", { dpr }),
 
   openUrl: (url: string) => call<void>("open_url", { url }),
 
@@ -81,10 +103,22 @@ export const Bridge = {
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
   chatSend: (query: string, context: ChatContext | null) =>
-    callOrThrow<{ text: string }>("chat_send", { query, context }),
+    callOrThrow<{ text: string; remembered: boolean }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  chatCancel: () => call<void>("chat_cancel"),
+  remindersList: () => call<Reminder[]>("reminders_list"),
+  remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
+  memoryList: () => call<MemoryNote[]>("memory_list"),
+  /** Rejects with the reason when the note looks like a secret or is invalid. */
+  memoryAdd: (text: string) => callOrThrow<void>("memory_add", { text }),
+  memoryDelete: (id: number) => call<void>("memory_delete", { id }),
+  memoryClear: () => call<void>("memory_clear"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  /** One screenshot, taken right now because the user pressed the eye button. */
+  captureScreen: () => callOrThrow<DroppedFile>("capture_screen"),
+  /** Native "open file" dialog. Resolves with the chosen path, or null if cancelled. */
+  pickFile: () => call<string | null>("pick_file"),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),
@@ -108,7 +142,8 @@ export interface IntegrationUpdate {
 
 export type ChatContext =
   | { kind: "file"; name: string; path: string }
-  | { kind: "window"; appName: string; title: string; url?: string };
+  | { kind: "window"; appName: string; title: string; url?: string }
+  | { kind: "screen"; path: string };
 
 export interface DroppedFile {
   name: string;

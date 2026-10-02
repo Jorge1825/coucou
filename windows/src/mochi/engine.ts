@@ -7,6 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
+import { drawAccessories, type FaceKind, type HatKind } from "./accessories";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ export const STATE_SOUND: Partial<Record<BotStateName, string>> = {
 
 const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
   love: "heart", surprised: "dot", proud: "star", wink: "wink",
-  yawn: "tired", happy: "happy", annoyed: "line",
+  yawn: "tired", happy: "happy", annoyed: "line", remember: "happy",
 };
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -168,6 +169,10 @@ export class BotEngine {
   isMini = false;
   /** Solid body colour for mini bots / integration pills (null = Mochi gradient). */
   bodyColor: RGB | null = null;
+
+  /** What Mochi wears (chosen in Settings). Mini bots never wear anything. */
+  hat: HatKind = "none";
+  face: FaceKind = "none";
 
   // Animated state (BotEngine `s`)
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
@@ -352,6 +357,35 @@ export class BotEngine {
     }, 1750);
   }
 
+  /**
+   * Hand up and waving to get the user's attention — used when a reminder pops
+   * up. Same hand as the greeting, but it waves longer and hops first.
+   */
+  attention() {
+    const t = now();
+    const tok = ++this.greetToken;
+    this.waveStart = t + 0.5;
+    this.waveUntil = t + 2.9;
+
+    this.eyeOverride = "happy";
+    this.eyeOverrideUntil = t + 3.2;
+    this.anim("oy", [[-0.14, 160, Ease.out], [0, 320, Ease.back], [-0.08, 140, Ease.out], [0, 280, Ease.back]]);
+    this.anim("tilt", [[0.08, 200, Ease.out], [-0.08, 400, Ease.inOut], [0.08, 400, Ease.inOut], [0, 300, Ease.inOut]]);
+
+    setTimeout(() => {
+      if (this.greetToken !== tok) return;
+      this.anim("hands", [[1, 260, Ease.out]]);
+      this.anim("sy", [[0.95, 100, Ease.out], [1.0, 260, Ease.back]]);
+      this.anim("sx", [[1.04, 100, Ease.out], [1.0, 260, Ease.back]]);
+    }, 300);
+    setTimeout(() => { if (this.greetToken === tok) this.blink(); }, 1200);
+    setTimeout(() => {
+      if (this.greetToken !== tok) return;
+      this.waveUntil = 0;
+      this.anim("hands", [[0, 220, Ease.inOut]]);
+    }, 2900);
+  }
+
   interruptGreet() {
     if (this.hands <= 0.01 && now() >= this.waveUntil) return;
     this.greetToken++;
@@ -415,6 +449,14 @@ export class BotEngine {
         break;
       case "happy":
         this.anim("blush", [[0.6, 200, Ease.out], [0, 600, Ease.inOut]]);
+        break;
+      case "remember":
+        // A quick nod, a little hop and a burst of sparkles: "got it, noted".
+        this.anim("pitch", [[0.28, 130, Ease.out], [0, 260, Ease.inOut]]);
+        this.anim("oy", [[-0.12, 150, Ease.out], [0, 320, Ease.back]]);
+        this.anim("blush", [[0.5, 200, Ease.out], [0, 700, Ease.inOut]]);
+        this.emit("spark", 5);
+        this.emit("star", 3);
         break;
       case "annoyed":
         this.eyeOverride = "line";
@@ -673,6 +715,9 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    if (!this.isMini && (this.hat !== "none" || this.face !== "none")) {
+      drawAccessories(x, this.hat, this.face, this, R, rx, ry);
+    }
 
     x.restore();
 

@@ -5,7 +5,7 @@
 // centre of the main display inside a borderless, transparent, always-on-top
 // window that never takes focus.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::System::Ole::RevokeDragDrop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
+use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW, GetPropW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
@@ -25,12 +25,214 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Logical size of the full window — the largest island view, like the macOS panel.
 pub const PANEL_W: f64 = 720.0;
-pub const PANEL_H: f64 = 320.0;
+pub const PANEL_H: f64 = 380.0;
 /// Logical size of the invisible strip that wakes the island when it is hidden.
 pub const STRIP_W: f64 = 240.0;
 pub const STRIP_H: f64 = 6.0;
 
+/// Logical width of the expanded island drawn inside the panel window.
+const EXPANDED_W: f64 = 640.0;
+
 pub const WINDOW_LABEL: &str = "island";
+
+// ── User placement ───────────────────────────────────────────────────────────
+
+/// Offset (logical px) of the island from its default top-centre spot.
+static OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+static DRAGGING: AtomicBool = AtomicBool::new(false);
+/// -1 = docked to the left edge, 1 = right edge, 0 = free.
+static DOCK: AtomicI32 = AtomicI32::new(0);
+
+pub fn dock() -> i32 {
+    DOCK.load(Ordering::SeqCst)
+}
+
+fn position_path() -> std::path::PathBuf {
+    crate::settings::config_dir().join("position.json")
+}
+
+pub fn load_position() {
+    if let Ok(bytes) = std::fs::read(position_path()) {
+        if let Ok((x, y)) = serde_json::from_slice::<(f64, f64)>(&bytes) {
+            *OFFSET.lock().unwrap() = (x, y);
+        }
+    }
+}
+
+fn save_position() {
+    let _ = std::fs::create_dir_all(crate::settings::config_dir());
+    if let Ok(json) = serde_json::to_vec(&*OFFSET.lock().unwrap()) {
+        let _ = std::fs::write(position_path(), json);
+    }
+}
+
+/// The island is about to retract: it never floats mid-screen, so it docks to the
+/// nearest of the left, right and top edges of its display.
+pub fn dock_nearest(app: &AppHandle, pref: &str, collapsed: bool) {
+    if DRAGGING.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(m) = target_monitor(app, pref) else { return };
+    let scale = m.scale_factor();
+    let ms = m.size();
+
+    let (odx, ody) = *OFFSET.lock().unwrap();
+    let half = EXPANDED_W / 2.0 * scale;
+    let mid = ms.width as f64 / 2.0;
+    // Centre of the island, and its top, relative to this display.
+    let cx = (mid + odx * scale).clamp(half.min(mid), (ms.width as f64 - half).max(mid));
+    let top = (ody * scale).max(0.0);
+
+    let gap_left = cx - half;
+    let gap_right = ms.width as f64 - half - cx;
+    let (dx, dy) = if gap_left <= gap_right && gap_left <= top {
+        ((half - mid) / scale, ody) // left edge, keep the height
+    } else if gap_right <= top {
+        ((ms.width as f64 - half - mid) / scale, ody) // right edge
+    } else {
+        (odx, 0.0) // top edge, keep the horizontal position
+    };
+    if (dx, dy) == (odx, ody) {
+        return;
+    }
+    *OFFSET.lock().unwrap() = (dx, dy);
+    apply_geometry(app, pref, collapsed);
+    save_position();
+}
+
+/// Puts the island back at the top centre of the display.
+pub fn reset_position(app: &AppHandle, pref: &str, collapsed: bool) {
+    *OFFSET.lock().unwrap() = (0.0, 0.0);
+    save_position();
+    apply_geometry(app, pref, collapsed);
+}
+
+// ── Shaking the island ───────────────────────────────────────────────────────
+
+const SHAKE_REVERSALS: usize = 4;
+const SHAKE_WINDOW_MS: u64 = 1400;
+/// How far (logical px) the window must travel back to count as a reversal.
+const SHAKE_SWING: f64 = 24.0;
+
+/// Tells a shake from a normal drag: the window going back and forth along one
+/// axis, several times, quickly. Pure, so it is unit tested.
+#[derive(Default)]
+struct AxisShake {
+    /// Farthest point reached in the current direction.
+    extreme: Option<f64>,
+    /// Current direction: 1 or -1 (0 until the first stroke is long enough).
+    dir: i32,
+    reversals: Vec<u64>,
+}
+
+impl AxisShake {
+    /// Feeds one position sample (same units as `min_swing`). True once the
+    /// window has reversed `SHAKE_REVERSALS` times within `SHAKE_WINDOW_MS`.
+    fn feed(&mut self, pos: f64, t_ms: u64, min_swing: f64) -> bool {
+        let Some(extreme) = self.extreme else {
+            self.extreme = Some(pos);
+            return false;
+        };
+        match self.dir {
+            0 => {
+                if (pos - extreme).abs() >= min_swing {
+                    self.dir = if pos > extreme { 1 } else { -1 };
+                    self.extreme = Some(pos);
+                }
+            }
+            d => {
+                let beyond = (pos - extreme) * d as f64;
+                if beyond > 0.0 {
+                    self.extreme = Some(pos); // still going: push the extreme out
+                } else if -beyond >= min_swing {
+                    // Came back far enough: a reversal.
+                    self.dir = -d;
+                    self.extreme = Some(pos);
+                    self.reversals.push(t_ms);
+                }
+            }
+        }
+        self.reversals.retain(|&r| t_ms.saturating_sub(r) <= SHAKE_WINDOW_MS);
+        self.reversals.len() >= SHAKE_REVERSALS
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+#[derive(Default)]
+struct ShakeDetector {
+    x: AxisShake,
+    y: AxisShake,
+}
+
+impl ShakeDetector {
+    fn feed(&mut self, x: f64, y: f64, t_ms: u64, min_swing: f64) -> bool {
+        let sx = self.x.feed(x, t_ms, min_swing);
+        let sy = self.y.feed(y, t_ms, min_swing);
+        if sx || sy {
+            self.x.reset();
+            self.y.reset();
+            return true;
+        }
+        false
+    }
+}
+
+/// Hands the move to Windows (smooth, native), then, once the button is released,
+/// remembers where the island ended up and snaps it back inside the display.
+pub fn begin_drag(app: &AppHandle, pref: String, gate: Arc<PollGate>) {
+    let Some(win) = window(app) else { return };
+    if DRAGGING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if win.start_dragging().is_err() {
+        DRAGGING.store(false, Ordering::SeqCst);
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        // Watch the window while it is being dragged: shaking it makes Mochi dizzy.
+        let started = std::time::Instant::now();
+        let mut shake = ShakeDetector::default();
+        let mut shaken = false;
+        while left_button_down() {
+            std::thread::sleep(Duration::from_millis(25));
+            if shaken {
+                continue;
+            }
+            if let (Some(win), Some(m)) = (window(&app), target_monitor(&app, &pref)) {
+                if let Ok(pos) = win.outer_position() {
+                    let swing = SHAKE_SWING * m.scale_factor();
+                    let t = started.elapsed().as_millis() as u64;
+                    if shake.feed(pos.x as f64, pos.y as f64, t, swing) {
+                        shaken = true;
+                        let _ = app.emit_to(WINDOW_LABEL, "shaken", ());
+                    }
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        if let (Some(win), Some(m)) = (window(&app), target_monitor(&app, &pref)) {
+            if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
+                let scale = m.scale_factor();
+                let mp = m.position();
+                let ms = m.size();
+                // Open, the island stays wherever the user drops it. It only docks
+                // to an edge when it is about to retract (see `dock_nearest`).
+                let cx = pos.x as f64 + size.width as f64 / 2.0;
+                let dx = (cx - (mp.x as f64 + ms.width as f64 / 2.0)) / scale;
+                let dy = (pos.y - mp.y) as f64 / scale;
+                *OFFSET.lock().unwrap() = (dx, dy);
+            }
+        }
+        DRAGGING.store(false, Ordering::SeqCst);
+        apply_geometry(&app, &pref, gate.collapsed.load(Ordering::Relaxed));
+        save_position();
+    });
+}
 
 /// Margin around the island that still counts as "on the island", in logical px.
 /// Wider than the macOS 6 pt because a click must never be swallowed.
@@ -146,11 +348,59 @@ unsafe extern "system" fn revoke_render_widget(hwnd: HWND, _: LPARAM) -> BOOL {
     let len = unsafe { GetClassNameW(hwnd, &mut name) };
     if len > 0 {
         let class = String::from_utf16_lossy(&name[..len as usize]);
-        if class == "Chrome_RenderWidgetHostHWND" {
-            let _ = unsafe { RevokeDragDrop(hwnd) };
+        let revoked = if class == "Chrome_RenderWidgetHostHWND" {
+            Some(unsafe { RevokeDragDrop(hwnd) })
+        } else {
+            None
+        };
+        // TEMP diagnostics: first few passes only.
+        static PASSES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if PASSES.fetch_add(1, Ordering::Relaxed) < 40 {
+            let has_target =
+                !unsafe { GetPropW(hwnd, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
+            crate::log::line(format!(
+                "dnd-diag child {:?} class={class} ole_target={has_target} revoke_ok={:?}",
+                hwnd.0,
+                revoked.map(|r| r.is_ok())
+            ));
         }
     }
     true.into()
+}
+
+/// Re-runs `unblock_webview_drops` now and again shortly after, because WebView2
+/// can re-register its own target once a resize or a late-created render widget
+/// settles. The cursor poll only does this on a button press, and it is parked
+/// while the island is hidden — which is exactly when a drag from Explorer starts.
+pub fn schedule_unblock_drops(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for delay_ms in [0u64, 250, 1000] {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            let h = handle.clone();
+            let _ = handle.run_on_main_thread(move || unblock_webview_drops(&h));
+        }
+    });
+}
+
+/// TEMP diagnostics: logs the window under the cursor and its parents, with
+/// whether each has an OLE drop target registered.
+fn log_hit_chain(cx: f64, cy: f64) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetParent, WindowFromPoint};
+    let mut cur = unsafe { WindowFromPoint(POINT { x: cx as i32, y: cy as i32 }) };
+    let mut out = String::new();
+    for _ in 0..8 {
+        if cur.0.is_null() {
+            break;
+        }
+        let mut name = [0u16; 64];
+        let len = unsafe { GetClassNameW(cur, &mut name) };
+        let class = String::from_utf16_lossy(&name[..len.max(0) as usize]);
+        let target = !unsafe { GetPropW(cur, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
+        out.push_str(&format!(" > {class}[target={target}]"));
+        cur = unsafe { GetParent(cur) }.unwrap_or_default();
+    }
+    crate::log::line(format!("dnd-diag hit chain:{out}"));
 }
 
 /// True while the left mouse button is held — the only signal we get that a
@@ -184,6 +434,13 @@ fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
         .or_else(|| monitors.into_iter().next())
 }
 
+/// Position and size, in physical pixels, of the display the island lives on.
+pub fn target_rect(app: &AppHandle, pref: &str) -> Option<(i32, i32, i32, i32)> {
+    let m = target_monitor(app, pref)?;
+    let (p, s) = (m.position(), m.size());
+    Some((p.x, p.y, s.width as i32, s.height as i32))
+}
+
 pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
     match target_monitor(app, pref) {
         Some(m) => {
@@ -211,17 +468,66 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let mp = *m.position();
     let ms = *m.size();
 
-    let (lw, lh) = if collapsed { (STRIP_W, STRIP_H) } else { (PANEL_W, PANEL_H) };
+    // Where the user left the island, as a logical offset from the default spot
+    // (top centre of the display). Clamped so the whole 640 px island stays on
+    // this display whatever its size or scale.
+    let (odx, ody) = *OFFSET.lock().unwrap();
+    let half = EXPANDED_W / 2.0 * scale;
+    let mid = mp.x as f64 + ms.width as f64 / 2.0;
+    let left_lim = (mp.x as f64 + half).min(mid);
+    let right_lim = (mp.x as f64 + ms.width as f64 - half).max(mid);
+    let cx = (mid + odx * scale).clamp(left_lim, right_lim);
+    let max_y = (ms.height as f64 - PANEL_H * scale).max(0.0);
+    let y = mp.y + (ody * scale).clamp(0.0, max_y).round() as i32;
+
+    // Pushed against a side edge = docked there.
+    let side = if odx < 0.0 && cx <= left_lim + 0.5 {
+        -1
+    } else if odx > 0.0 && cx >= right_lim - 0.5 {
+        1
+    } else {
+        0
+    };
+    if DOCK.swap(side, Ordering::SeqCst) != side {
+        let _ = app.emit_to(WINDOW_LABEL, "dock", side);
+    }
+
+    // Retracted: the wake strip lies along the screen edge it is docked to
+    // instead of across the top.
+    let (lw, lh) = match (collapsed, side) {
+        (false, _) => (PANEL_W, PANEL_H),
+        (true, 0) => (STRIP_W, STRIP_H),
+        (true, _) => (STRIP_H, STRIP_W),
+    };
     let pw = (lw * scale).round().max(1.0) as u32;
     let ph = (lh * scale).round().max(1.0) as u32;
-    let x = mp.x + (ms.width as i32 - pw as i32) / 2;
-    let y = mp.y;
+    let x = if collapsed && side < 0 {
+        mp.x
+    } else if collapsed && side > 0 {
+        mp.x + ms.width as i32 - pw as i32
+    } else {
+        (cx - pw as f64 / 2.0).round() as i32
+    };
 
     let _ = win.set_size(PhysicalSize::new(pw, ph));
     let _ = win.set_position(PhysicalPosition::new(x, y));
     // Moving across displays can rescale the window: re-assert the physical size.
     let _ = win.set_size(PhysicalSize::new(pw, ph));
     let _ = win.set_always_on_top(true);
+
+    // Windows can clamp or lag a resize (DPI change between displays, the window
+    // coming out of the 240 px strip). A panel narrower than the 640 px island
+    // gets cut on both sides, so check what we actually got and insist once.
+    if let Ok(got) = win.inner_size() {
+        if got.width != pw || got.height != ph {
+            crate::log::line(format!(
+                "window size mismatch: wanted {pw}x{ph}, got {}x{} (scale {scale}, monitor {}x{})",
+                got.width, got.height, ms.width, ms.height
+            ));
+            let _ = win.set_size(PhysicalSize::new(pw, ph));
+            let _ = win.set_position(PhysicalPosition::new(x, y));
+        }
+    }
 }
 
 fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
@@ -230,6 +536,46 @@ fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
         return None;
     }
     Some(HWND(raw as *mut _))
+}
+
+/// Shows the system "open file" dialog, owned by the island so it comes to the
+/// front. Blocks until the user chooses or cancels, so call it off the UI thread.
+pub fn pick_file(app: &AppHandle) -> Option<String> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH,
+    };
+
+    let owner = window(app).as_ref().and_then(hwnd_of);
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let path = (|| -> Option<String> {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| crate::log::line(format!("pick: cannot create dialog: {e}")))
+                    .ok()?;
+            let options = dialog.GetOptions().ok()?;
+            dialog.SetOptions(options | FOS_FORCEFILESYSTEM).ok()?;
+            crate::log::line("pick: showing dialog");
+            // Err on cancel (HRESULT_FROM_WIN32(ERROR_CANCELLED)).
+            dialog
+                .Show(owner)
+                .map_err(|e| crate::log::line(format!("pick: dialog returned {e}")))
+                .ok()?;
+            let item = dialog.GetResult().ok()?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+            let path = name.to_string().ok();
+            CoTaskMemFree(Some(name.0 as *const _));
+            path
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        path
+    }
 }
 
 /// WS_EX_NOACTIVATE keeps clicks from stealing focus; WS_EX_TOOLWINDOW keeps the
@@ -275,6 +621,7 @@ fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
 pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
     std::thread::spawn(move || {
         let mut was_down = false;
+        let mut was_dragging = false;
         // Remembered across wakes so a display change while hidden is noticed the
         // moment the island comes back.
         let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
@@ -349,6 +696,12 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     && y >= 0.0
                     && y <= size.1;
 
+                // TEMP diagnostics: what window would OLE hit under the cursor?
+                if dragging && !was_dragging {
+                    log_hit_chain(cx, cy);
+                }
+                was_dragging = dragging;
+
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {
                     gate.ignoring.store(!accept, Ordering::Relaxed);
@@ -364,5 +717,54 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
 pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
     if let Some(win) = window(app) {
         let _ = win.set_ignore_cursor_events(ignore);
+    }
+}
+
+#[cfg(test)]
+mod shake_tests {
+    use super::*;
+
+    /// Feeds a path of x positions, 40 ms apart, and says whether it shook.
+    fn shakes(xs: &[f64]) -> bool {
+        let mut d = ShakeDetector::default();
+        xs.iter().enumerate().any(|(i, &x)| d.feed(x, 0.0, i as u64 * 40, 24.0))
+    }
+
+    #[test]
+    fn a_plain_drag_is_not_a_shake() {
+        let path: Vec<f64> = (0..60).map(|i| i as f64 * 10.0).collect();
+        assert!(!shakes(&path));
+    }
+
+    #[test]
+    fn a_drag_with_one_turn_is_not_a_shake() {
+        let mut path: Vec<f64> = (0..20).map(|i| i as f64 * 10.0).collect();
+        path.extend((0..20).map(|i| 190.0 - i as f64 * 10.0));
+        assert!(!shakes(&path));
+    }
+
+    #[test]
+    fn going_back_and_forth_is_a_shake() {
+        // 60 px strokes, left and right, one every 5 samples (200 ms).
+        let mut path = Vec::new();
+        for _ in 0..6 {
+            path.extend([0.0, 15.0, 30.0, 45.0, 60.0]);
+            path.extend([45.0, 30.0, 15.0, 0.0]);
+        }
+        assert!(shakes(&path));
+    }
+
+    #[test]
+    fn small_jitter_is_not_a_shake() {
+        let path: Vec<f64> = (0..80).map(|i| if i % 2 == 0 { 100.0 } else { 108.0 }).collect();
+        assert!(!shakes(&path));
+    }
+
+    #[test]
+    fn slow_swaying_is_not_a_shake() {
+        // The same big strokes, but 600 ms per sample: the reversals are too far apart.
+        let mut d = ShakeDetector::default();
+        let path = [0.0, 60.0, 0.0, 60.0, 0.0, 60.0, 0.0, 60.0];
+        assert!(!path.iter().enumerate().any(|(i, &x)| d.feed(x, 0.0, i as u64 * 600, 24.0)));
     }
 }

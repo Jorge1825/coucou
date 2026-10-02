@@ -6,8 +6,12 @@ mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod memory;
 mod pipe;
+mod proactive;
 mod providers;
+mod reminders;
+mod screen;
 mod secrets;
 mod settings;
 mod tray;
@@ -44,6 +48,8 @@ pub struct BootInfo {
     screen: ScreenInfo,
     version: String,
     hook_path: String,
+    /// -1 / 1 when the island is docked to the left / right screen edge.
+    dock: i32,
 }
 
 #[tauri::command]
@@ -57,6 +63,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
         screen,
         version: env!("CARGO_PKG_VERSION").to_string(),
         hook_path: settings::hook_exe_path().to_string_lossy().to_string(),
+        dock: island::dock(),
     }
 }
 
@@ -98,6 +105,8 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     island::set_ignore_cursor(&app, false);
     shared.gate.forget_ignore_state();
     shared.gate.set_active(!collapsed);
+    // The poll is parked while collapsed, so it can't prepare the drop target.
+    island::schedule_unblock_drops(&app);
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.
@@ -120,6 +129,45 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
+}
+
+#[tauri::command]
+fn reset_position(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    island::reset_position(&app, &pref, collapsed);
+}
+
+/// The island is retracting: dock it to the nearest screen edge.
+#[tauri::command]
+fn dock_nearest(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    island::dock_nearest(&app, &pref, collapsed);
+}
+
+/// The island's background was dragged: let Windows move the window.
+#[tauri::command]
+fn begin_drag(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    island::begin_drag(&app, pref, shared.gate.clone());
+}
+
+/// The panel is laid out in CSS px against the window's own scale. If the webview
+/// reports a different devicePixelRatio (it ends up bigger than the window and gets
+/// cut), correct its zoom so one CSS px is one logical px again.
+#[tauri::command]
+fn fit_zoom(app: AppHandle, dpr: f64) {
+    let Some(win) = island::window(&app) else { return };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if dpr <= 0.0 || (dpr - scale).abs() / scale < 0.02 {
+        return;
+    }
+    static ZOOM: std::sync::Mutex<f64> = std::sync::Mutex::new(1.0);
+    let mut zoom = ZOOM.lock().unwrap();
+    *zoom *= scale / dpr;
+    log::line(format!("webview dpr {dpr} != window scale {scale} — zoom {}", *zoom));
+    let _ = win.set_zoom(*zoom);
 }
 
 #[tauri::command]
@@ -219,6 +267,25 @@ fn hooks_apply(
     Ok(backup)
 }
 
+/// One screenshot of the island's display, only when the user asks for it.
+#[tauri::command]
+async fn capture_screen(app: AppHandle, shared: State<'_, Shared>) -> Result<DroppedFile, String> {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let rect = island::target_rect(&app, &pref).ok_or("No screen to capture.")?;
+    tauri::async_runtime::spawn_blocking(move || screen::capture(rect))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Native file chooser for the drop zone; `None` when the user cancels.
+#[tauri::command]
+async fn pick_file(app: AppHandle) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || island::pick_file(&app))
+        .await
+        .ok()
+        .flatten()
+}
+
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     pipe::answer(&app, &request_id, &decision);
@@ -252,6 +319,45 @@ async fn chat_send(
     let settings = shared.settings.lock().unwrap().clone();
     let target = providers::target(&settings)?;
     claude::send(&chat, &target, &settings.model, query, context).await
+}
+
+/// Pending reminders, soonest first, for the settings window.
+#[tauri::command]
+fn reminders_list() -> Vec<reminders::Reminder> {
+    reminders::load()
+}
+
+#[tauri::command]
+fn reminders_delete(id: u64) -> Result<(), String> {
+    reminders::delete(id)
+}
+
+/// Everything Mochi remembers, oldest first, for the settings window.
+#[tauri::command]
+fn memory_list() -> Vec<memory::Note> {
+    memory::list()
+}
+
+/// A note typed in the settings window. Refused if it looks like a secret.
+#[tauri::command]
+fn memory_add(text: String) -> Result<(), String> {
+    memory::add(&text, "user").map(|_| ())
+}
+
+#[tauri::command]
+fn memory_delete(id: u64) -> Result<(), String> {
+    memory::delete(id)
+}
+
+#[tauri::command]
+fn memory_clear() -> Result<(), String> {
+    memory::clear()
+}
+
+/// The user pressed stop: abandon the request in flight.
+#[tauri::command]
+fn chat_cancel(chat: State<Chat>) {
+    chat.cancel();
 }
 
 #[tauri::command]
@@ -389,6 +495,10 @@ pub fn run() {
             set_island_rect,
             focus_window,
             reposition,
+            fit_zoom,
+            begin_drag,
+            dock_nearest,
+            reset_position,
             open_url,
             open_in_vscode,
             quit_app,
@@ -401,7 +511,16 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            chat_cancel,
+            memory_list,
+            memory_add,
+            memory_delete,
+            memory_clear,
+            reminders_list,
+            reminders_delete,
             ingest_file,
+            pick_file,
+            capture_screen,
             secret_present,
             secret_set,
             secret_clear,
@@ -416,6 +535,7 @@ pub fn run() {
             // Before the island: see create_settings_window.
             create_settings_window(&handle);
 
+            island::load_position();
             if let Some(win) = island::window(&handle) {
                 island::make_non_activating(&win);
                 island::apply_geometry(&handle, &loaded.screen, false);
@@ -424,10 +544,12 @@ pub fn run() {
             gate.collapsed.store(false, Ordering::Relaxed);
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
+            island::schedule_unblock_drops(&handle);
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            proactive::start(handle.clone());
             integrations::start(handle.clone());
             Ok(())
         })

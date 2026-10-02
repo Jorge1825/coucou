@@ -27,7 +27,7 @@ function dashedFrame(): SVGSVGElement {
   return el;
 }
 
-export function buildUpload(): ViewHost {
+export function buildUpload(actions: ViewActions): ViewHost {
   const frame = dashedFrame();
   const title = h("div", { class: "drop-title", text: "Drop your files here" });
   const tags = h(
@@ -37,7 +37,7 @@ export function buildUpload(): ViewHost {
   );
   const card = h(
     "div",
-    { class: "card drop-card" },
+    { class: "card drop-card", title: "Click to choose a file", onclick: () => actions.pickFile() },
     frame,
     h("div", { class: "drop-body" }, title, tags),
   );
