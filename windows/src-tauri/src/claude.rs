@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{memory, reminders};
+use crate::{context, memory, reminders};
 use crate::providers::{openai_body, openai_text, post, ApiFormat, Target};
 
 const MAX_TOKENS: u32 = 4096;
@@ -144,8 +144,10 @@ fn remember_schema() -> Value {
     })
 }
 
-fn system_prompt(tools_on: bool) -> String {
-    let notes = memory::load();
+fn system_prompt(tools_on: bool, query: &str) -> String {
+    // Not every note rides along on every message: only the newest and the ones
+    // that relate to what was just asked (see context::select_notes).
+    let notes = context::select_notes(&memory::load(), query);
     let mut prompt = SYSTEM_PROMPT.to_string();
     if !tools_on {
         // No tools this turn: the model must not believe it has any, or some
@@ -176,7 +178,9 @@ do it when asked, and on your own when the user mentions something with a time o
 /// its saved notes.
 fn append_context(prompt: &mut String, notes: &[String], with_reminders: bool) {
     if with_reminders {
-        let pending = reminders::load();
+        let mut pending = reminders::load();
+        pending.sort_by(|a, b| a.due.cmp(&b.due)); // "YYYY-MM-DDTHH:MM" sorts as text
+        pending.truncate(context::REMINDERS_SHOWN);
         if !pending.is_empty() {
             prompt.push_str("\n\nReminders already set:\n");
             for r in pending {
@@ -224,14 +228,35 @@ fn is_client_tool(name: Option<&str>) -> bool {
     matches!(name, Some(REMEMBER) | Some(REMIND))
 }
 
+/// Prompt caching is Anthropic's own feature; other servers that merely speak the
+/// same format may reject the extra field, so it is only used on their API.
+fn supports_prompt_caching(target: &Target) -> bool {
+    target.format == ApiFormat::Anthropic && target.url.contains("://api.anthropic.com/")
+}
+
 fn build_body(
     format: ApiFormat,
     model: &str,
     system: &str,
     history: &[Value],
     with_tools: bool,
+    cache: bool,
 ) -> Result<Value, String> {
     match format {
+        ApiFormat::Anthropic if cache => {
+            // Prompt caching: tools + system prompt + the conversation so far are the
+            // same prefix on the next message, so they are billed at a fraction.
+            let mut messages = history.to_vec();
+            context::mark_last_message(&mut messages);
+            Ok(json!({
+                "model": model,
+                "max_tokens": MAX_TOKENS,
+                "system": [{ "type": "text", "text": system, "cache_control": context::cache_marker() }],
+                "tools": anthropic_tools(),
+                "fallbacks": "default",
+                "messages": messages,
+            }))
+        }
         ApiFormat::Anthropic => Ok(json!({
             "model": model,
             "max_tokens": MAX_TOKENS,
@@ -438,6 +463,7 @@ async fn send_turn(
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     let mut content: Vec<Value> = Vec::new();
+    let question = query.clone();
 
     // File / window context rides along with the first message only, exactly
     // like ClaudeService.chat().
@@ -488,8 +514,11 @@ async fn send_turn(
 
     loop {
         let tools_on = with_tools && !tools_disabled();
-        let system = system_prompt(tools_on);
-        let body = match build_body(target.format, model, &system, &chat.snapshot(), with_tools) {
+        let system = system_prompt(tools_on, &question);
+        // The stored history stays whole; each request carries only what fits the
+        // budget (newest turns, plus the first when it holds the attached file).
+        let history = context::compact_history(&chat.snapshot(), context::HISTORY_BUDGET_TOKENS);
+        let body = match build_body(target.format, model, &system, &history, with_tools, supports_prompt_caching(target)) {
             Ok(body) => body,
             Err(err) => return fail(pushed, err),
         };
