@@ -445,6 +445,14 @@ export class BotEngine {
       case "happy":
         this.anim("blush", [[0.6, 200, Ease.out], [0, 600, Ease.inOut]]);
         break;
+      case "remember":
+        // A quick nod, a little hop and a burst of sparkles: "got it, noted".
+        this.anim("pitch", [[0.28, 130, Ease.out], [0, 260, Ease.inOut]]);
+        this.anim("oy", [[-0.12, 150, Ease.out], [0, 320, Ease.back]]);
+        this.anim("blush", [[0.5, 200, Ease.out], [0, 700, Ease.inOut]]);
+        this.emit("spark", 5);
+        this.emit("star", 3);
+        break;
       case "annoyed":
         this.eyeOverride = "line";
         this.eyeOverrideUntil = t + 0.8;

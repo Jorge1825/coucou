@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::{memory, reminders};
 use crate::providers::{openai_body, openai_text, post, ApiFormat, Target};
 
 const MAX_TOKENS: u32 = 4096;
@@ -29,7 +30,12 @@ No markdown formatting (no **, no ##, no bullet dashes). Use plain text with lin
 pub struct Chat {
     /// Full multi-turn history, including tool_use / tool_result blocks.
     messages: Mutex<Vec<Value>>,
+    /// Woken by `chat_cancel` to abandon the turn in flight.
+    cancel: tokio::sync::Notify,
 }
+
+/// What `send` returns when the user stopped the request. The island matches on it.
+pub const CANCELLED: &str = "cancelled";
 
 impl Chat {
     pub fn reset(&self) {
@@ -51,6 +57,15 @@ impl Chat {
     fn snapshot(&self) -> Vec<Value> {
         self.messages.lock().unwrap().clone()
     }
+
+    fn restore(&self, messages: Vec<Value>) {
+        *self.messages.lock().unwrap() = messages;
+    }
+
+    /// Stops the turn in flight, if any, and puts the history back as it was.
+    pub fn cancel(&self) {
+        self.cancel.notify_waiters();
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -64,11 +79,355 @@ pub enum ChatContext {
 #[serde(rename_all = "camelCase")]
 pub struct ChatReply {
     pub text: String,
+    /// Mochi saved a note or set a reminder during this turn — the island plays
+    /// a little animation for it.
+    pub remembered: bool,
+}
+
+/// What one API response boils down to, whichever wire format it came in.
+struct Turn {
+    /// Assistant content in Anthropic block format — what goes into the history.
+    blocks: Vec<Value>,
+    text: String,
+    /// Client-side tool calls the model made: (call id, tool name, input).
+    calls: Vec<(String, String, Value)>,
+}
+
+const REMEMBER: &str = "remember";
+const REMIND: &str = "remind";
+/// A turn may chain a few `remember` calls before the final answer; more than
+/// this is a model going in circles.
+const MAX_TOOL_ROUNDS: usize = 3;
+
+fn remember_description() -> &'static str {
+    "Save one short note about the user to your long-term memory, which is kept in a local file and shown to you at the start of every conversation. \
+Call it whenever the user asks you to remember something, and on your own as soon as they tell you a lasting fact about themselves \
+(their name, language, location, job, family, preferences, projects, recurring context). One fact per call, one short sentence, \
+written as a plain statement, e.g. \"The user's name is Ana.\" \
+Never save passwords, API keys, tokens, card or account numbers, or any other credential or secret, and do not save one-off requests or small talk."
+}
+
+fn remind_description() -> &'static str {
+    "Set a reminder: Mochi will interrupt the user with `text` at the given local time, even when no window is open. \
+Use it when the user asks to be reminded, and also on your own whenever they mention something with a time or deadline \
+they would want a nudge about (a meeting, a payment, a call, an appointment). `when` is local time as YYYY-MM-DDTHH:MM, in the future. \
+Never put passwords, keys or other secrets in `text`."
+}
+
+fn remind_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "text": { "type": "string", "description": "What to remind the user of, in their language, one short sentence." },
+            "when": { "type": "string", "description": "Local date and time, YYYY-MM-DDTHH:MM." },
+        },
+        "required": ["text", "when"],
+    })
+}
+
+/// (name, description, JSON schema) of every tool Mochi runs itself.
+fn client_tools() -> Vec<(&'static str, &'static str, Value)> {
+    vec![
+        (REMEMBER, remember_description(), remember_schema()),
+        (REMIND, remind_description(), remind_schema()),
+    ]
+}
+
+fn remember_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "note": { "type": "string", "description": "The fact to remember, in one short sentence." } },
+        "required": ["note"],
+    })
+}
+
+fn system_prompt(tools_on: bool) -> String {
+    let notes = memory::load();
+    let mut prompt = SYSTEM_PROMPT.to_string();
+    if !tools_on {
+        // No tools this turn: the model must not believe it has any, or some
+        // models write the call out as plain text.
+        prompt.push_str(" You have no tools other than web search in this conversation.");
+        append_context(&mut prompt, &notes, false);
+        return prompt;
+    }
+    prompt.push_str(
+        " You have a long-term memory (the remember tool). Use it, without asking permission, every time the user tells you \
+something about themselves that will still be true and useful in a future conversation: their name or what they like to be called, \
+language, where they live or work, family and pets, preferences and habits, tools they use, projects they keep coming back to, plans and goals. \
+For example, if they say \"me llamo Ana\" or \"I'm a nurse\", call remember in that same turn, while you answer. \
+Also use it whenever they ask you to remember something. One short fact per call. Do not save one-off requests, \
+small talk or things already in your notes, and never save credentials or secrets of any kind. \
+Do not announce every note you save; mention it only when the user asked you to remember something.",
+    );
+    prompt.push_str(&format!(
+        "\n\nThe user's local date and time is {} (YYYY-MM-DDTHH:MM). You can set reminders with the remind tool: \
+do it when asked, and on your own when the user mentions something with a time or deadline.",
+        reminders::now()
+    ));
+    append_context(&mut prompt, &notes, true);
+    prompt
+}
+
+/// What Mochi already knows: pending reminders (only when it can set more) and
+/// its saved notes.
+fn append_context(prompt: &mut String, notes: &[String], with_reminders: bool) {
+    if with_reminders {
+        let pending = reminders::load();
+        if !pending.is_empty() {
+            prompt.push_str("\n\nReminders already set:\n");
+            for r in pending {
+                prompt.push_str(&format!("- {} {}\n", r.due, r.text));
+            }
+        }
+    }
+    if !notes.is_empty() {
+        prompt.push_str("\n\nWhat you remember about the user:\n");
+        for note in notes {
+            prompt.push_str("- ");
+            prompt.push_str(note);
+            prompt.push('\n');
+        }
+    }
+}
+
+/// Some models (DeepSeek's DSML, for one) write a tool call out as text when the
+/// API did not take it as a call. Cut that markup so it never reaches the user
+/// or the history; whatever was said before it is kept.
+fn strip_tool_markup(text: &str) -> String {
+    let Some(at) = text.find("DSML") else { return text.to_string() };
+    let start = text[..at].rfind('<').unwrap_or(at);
+    text[..start].trim_end().to_string()
+}
+
+/// Debug switch: COUCOU_NO_TOOLS=1 turns Mochi's own tools (remember, remind) off,
+/// to tell a tool problem apart from a provider problem.
+fn tools_disabled() -> bool {
+    std::env::var_os("COUCOU_NO_TOOLS").is_some()
+}
+
+fn anthropic_tools() -> Value {
+    let mut tools = vec![json!({ "type": "web_search_20260209", "name": "web_search", "max_uses": 5 })];
+    if tools_disabled() {
+        return Value::Array(tools);
+    }
+    for (name, description, schema) in client_tools() {
+        tools.push(json!({ "name": name, "description": description, "input_schema": schema }));
+    }
+    Value::Array(tools)
+}
+
+fn is_client_tool(name: Option<&str>) -> bool {
+    matches!(name, Some(REMEMBER) | Some(REMIND))
+}
+
+fn build_body(
+    format: ApiFormat,
+    model: &str,
+    system: &str,
+    history: &[Value],
+    with_tools: bool,
+) -> Result<Value, String> {
+    match format {
+        ApiFormat::Anthropic => Ok(json!({
+            "model": model,
+            "max_tokens": MAX_TOKENS,
+            "system": system,
+            "tools": anthropic_tools(),
+            "fallbacks": "default",
+            "messages": history,
+        })),
+        ApiFormat::OpenAi => {
+            let mut body = openai_body(model, system, history, MAX_TOKENS)?;
+            if with_tools && !tools_disabled() {
+                body["tools"] = Value::Array(
+                    client_tools()
+                        .into_iter()
+                        .map(|(name, description, schema)| {
+                            json!({
+                                "type": "function",
+                                "function": { "name": name, "description": description, "parameters": schema },
+                            })
+                        })
+                        .collect(),
+                );
+            }
+            Ok(body)
+        }
+    }
+}
+
+fn parse_turn(format: ApiFormat, response: &Value) -> Result<Turn, String> {
+    match format {
+        ApiFormat::Anthropic => {
+            // A policy decline comes back as HTTP 200 with stop_reason "refusal".
+            if response.get("stop_reason").and_then(Value::as_str) == Some("refusal") {
+                let why = response
+                    .get("stop_details")
+                    .and_then(|d| d.get("explanation"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("Claude declined this one.");
+                return Err(why.to_string());
+            }
+            let blocks = response
+                .get("content")
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or("Unexpected API response.")?;
+            let text = blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let calls = blocks
+                .iter()
+                .filter(|b| {
+                    b.get("type").and_then(Value::as_str) == Some("tool_use")
+                        && is_client_tool(b.get("name").and_then(Value::as_str))
+                })
+                .map(|b| {
+                    (
+                        b.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        b.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        b.get("input").cloned().unwrap_or(Value::Null),
+                    )
+                })
+                .collect();
+            Ok(Turn { blocks, text, calls })
+        }
+        ApiFormat::OpenAi => {
+            let message = response
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .ok_or("Unexpected API response.")?;
+            // `content` is null when the model only calls a tool.
+            let text = strip_tool_markup(&openai_text(response).unwrap_or_default());
+            let mut blocks: Vec<Value> = Vec::new();
+            if !text.trim().is_empty() {
+                blocks.push(json!({ "type": "text", "text": text.trim() }));
+            }
+            let mut calls = Vec::new();
+            for call in message.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                let name = call.get("function").and_then(|f| f.get("name")).and_then(Value::as_str);
+                if !is_client_tool(name) {
+                    continue;
+                }
+                let name = name.unwrap_or_default().to_string();
+                let id = call.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let input = call
+                    .get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .and_then(Value::as_str)
+                    .and_then(|a| serde_json::from_str::<Value>(a).ok())
+                    .unwrap_or(Value::Null);
+                blocks.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }));
+                calls.push((id, name, input));
+            }
+            Ok(Turn { blocks, text, calls })
+        }
+    }
+}
+
+/// Runs one client tool call and returns what the model is told about it.
+fn run_tool(name: &str, input: &Value) -> String {
+    match name {
+        REMIND => run_remind(input),
+        _ => run_remember(input),
+    }
+}
+
+fn run_remind(input: &Value) -> String {
+    let (Some(text), Some(when)) = (
+        input.get("text").and_then(Value::as_str),
+        input.get("when").and_then(Value::as_str),
+    ) else {
+        return "Not saved: the call needs `text` and `when`.".into();
+    };
+    match reminders::add(text, when) {
+        Ok(()) => "Reminder set.".into(),
+        Err(why) => why,
+    }
+}
+
+fn run_remember(input: &Value) -> String {
+    let Some(note) = input.get("note").and_then(Value::as_str) else {
+        return "Not saved: the call had no note.".into();
+    };
+    match memory::add(note, "mochi") {
+        Ok(memory::Saved::New) => "Saved.".into(),
+        Ok(memory::Saved::AlreadyKnown) => "Already remembered.".into(),
+        Err(why) => why,
+    }
+}
+
+#[cfg(test)]
+mod tests_markup {
+    use super::strip_tool_markup;
+
+    #[test]
+    fn leaked_tool_markup_is_cut() {
+        assert_eq!(strip_tool_markup("Hecho.\n< | DSML | calls>\n< | DSML | invoke name=\"remind\">"), "Hecho.");
+        assert_eq!(strip_tool_markup("< | DSML | calls>"), "");
+        assert_eq!(strip_tool_markup("Hola, ¿en qué te ayudo?"), "Hola, ¿en qué te ayudo?");
+    }
+}
+
+/// A single question-and-answer with no history and no tools — used by the
+/// proactive check-in. Returns the model's text.
+pub async fn one_shot(target: &Target, model: &str, system: &str, user: &str) -> Result<String, String> {
+    let history = vec![json!({ "role": "user", "content": [{ "type": "text", "text": user }] })];
+    let body = match target.format {
+        ApiFormat::Anthropic => json!({
+            "model": model,
+            "max_tokens": 300,
+            "system": system,
+            "messages": history,
+        }),
+        ApiFormat::OpenAi => openai_body(model, system, &history, 300)?,
+    };
+    let response = post(target, &body).await?;
+    let text = match target.format {
+        ApiFormat::Anthropic => response
+            .get("content")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                    .filter_map(|b| b.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default(),
+        ApiFormat::OpenAi => openai_text(&response).unwrap_or_default(),
+    };
+    Ok(text.trim().to_string())
 }
 
 /// One chat turn. Returns the assistant's text, or a message the island shows
-/// in the note view.
+/// in the note view. Can be stopped with `Chat::cancel`, which drops the request
+/// and leaves the history exactly as it was before the question.
 pub async fn send(
+    chat: &Chat,
+    target: &Target,
+    model: &str,
+    query: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    let before = chat.snapshot();
+    tokio::select! {
+        result = send_turn(chat, target, model, query, context) => result,
+        _ = chat.cancel.notified() => {
+            chat.restore(before);
+            crate::log::line("chat: cancelled by the user".to_string());
+            Err(CANCELLED.to_string())
+        }
+    }
+}
+
+async fn send_turn(
     chat: &Chat,
     target: &Target,
     model: &str,
@@ -100,93 +459,85 @@ pub async fn send(
     content.push(json!({ "type": "text", "text": query }));
 
     chat.push(json!({ "role": "user", "content": content }));
-
-    let response = match target.format {
-        ApiFormat::Anthropic => {
-            let body = json!({
-                "model": model,
-                "max_tokens": MAX_TOKENS,
-                "system": SYSTEM_PROMPT,
-                "tools": [{ "type": "web_search_20260209", "name": "web_search", "max_uses": 5 }],
-                "fallbacks": "default",
-                "messages": chat.snapshot(),
-            });
-            post_or_pop(chat, target, body).await?
+    // Messages added by this call, so a failure leaves the history as it was.
+    let mut pushed = 1;
+    let fail = |pushed: usize, err: String| -> Result<ChatReply, String> {
+        for _ in 0..pushed {
+            chat.pop();
         }
-        ApiFormat::OpenAi => {
-            let body = match openai_body(model, SYSTEM_PROMPT, &chat.snapshot(), MAX_TOKENS) {
-                Ok(body) => body,
-                Err(err) => {
-                    chat.pop();
-                    return Err(err);
-                }
-            };
-            post_or_pop(chat, target, body).await?
-        }
+        Err(err)
     };
 
-    if target.format == ApiFormat::OpenAi {
-        let text = match openai_text(&response) {
-            Some(text) => text.trim().to_string(),
-            None => {
-                chat.pop();
-                return Err("Unexpected API response.".into());
+    // Some OpenAI-compatible servers reject `tools`; if so, chat without them.
+    let mut with_tools = true;
+    let mut rounds = 0;
+    let mut spoken: Vec<String> = Vec::new();
+    let mut remembered = false;
+
+    loop {
+        let tools_on = with_tools && !tools_disabled();
+        let system = system_prompt(tools_on);
+        let body = match build_body(target.format, model, &system, &chat.snapshot(), with_tools) {
+            Ok(body) => body,
+            Err(err) => return fail(pushed, err),
+        };
+        let response = match post(target, &body).await {
+            Ok(value) => value,
+            Err(err) if target.format == ApiFormat::OpenAi && with_tools => {
+                crate::log::line(format!("chat: request with tools failed ({err}); retrying without"));
+                with_tools = false;
+                continue;
+            }
+            Err(err) => {
+                crate::log::line(format!("chat: request failed: {err}"));
+                return fail(pushed, err);
             }
         };
-        if text.is_empty() {
-            chat.pop();
-            return Err("No response text.".into());
+        let turn = match parse_turn(target.format, &response) {
+            Ok(turn) => turn,
+            Err(err) => {
+                crate::log::line(format!("chat: bad response: {err}"));
+                return fail(pushed, err);
+            }
+        };
+        crate::log::line(format!(
+            "chat: round {rounds} ok — {} chars, {} tool call(s)",
+            turn.text.chars().count(),
+            turn.calls.len()
+        ));
+
+        // Store the whole content — tool_use / tool_result blocks included — so
+        // the next turn has the right context.
+        if !turn.blocks.is_empty() {
+            chat.push(json!({ "role": "assistant", "content": turn.blocks }));
+            pushed += 1;
         }
-        chat.push(json!({ "role": "assistant", "content": [{ "type": "text", "text": text }] }));
-        return Ok(ChatReply { text });
-    }
-
-    // A policy decline comes back as HTTP 200 with stop_reason "refusal".
-    if response.get("stop_reason").and_then(Value::as_str) == Some("refusal") {
-        chat.pop();
-        let why = response
-            .get("stop_details")
-            .and_then(|d| d.get("explanation"))
-            .and_then(Value::as_str)
-            .unwrap_or("Claude declined this one.");
-        return Err(why.to_string());
-    }
-
-    let Some(blocks) = response.get("content").and_then(Value::as_array).cloned() else {
-        chat.pop();
-        return Err("Unexpected API response.".into());
-    };
-
-    // Store the whole content — tool_use / tool_result blocks included — so the
-    // next turn has the right context.
-    chat.push(json!({ "role": "assistant", "content": blocks.clone() }));
-
-    let text = blocks
-        .iter()
-        .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|b| b.get("text").and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string();
-
-    if text.is_empty() {
-        chat.pop();
-        return Err("No response text.".into());
-    }
-    Ok(ChatReply { text })
-}
-
-/// Posts a turn, keeping the history consistent with what the model saw when
-/// the call fails.
-async fn post_or_pop(chat: &Chat, target: &Target, body: Value) -> Result<Value, String> {
-    match post(target, &body).await {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            chat.pop();
-            Err(err)
+        if !turn.text.trim().is_empty() {
+            spoken.push(turn.text.trim().to_string());
         }
+
+        if turn.calls.is_empty() || rounds >= MAX_TOOL_ROUNDS {
+            break;
+        }
+        rounds += 1;
+        let results: Vec<Value> = turn
+            .calls
+            .iter()
+            .map(|(id, name, input)| {
+                json!({ "type": "tool_result", "tool_use_id": id, "content": run_tool(name, input) })
+            })
+            .collect();
+        remembered |= results.iter().any(|r| {
+            matches!(r["content"].as_str(), Some("Saved.") | Some("Reminder set."))
+        });
+        chat.push(json!({ "role": "user", "content": results }));
+        pushed += 1;
     }
+
+    if spoken.is_empty() {
+        return fail(pushed, "No response text.".into());
+    }
+    Ok(ChatReply { text: spoken.join("\n"), remembered })
 }
 
 /// PDF → document block, image → image block, text/code → inline text.

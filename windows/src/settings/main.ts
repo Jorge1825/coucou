@@ -523,6 +523,8 @@ function generalSection(): HTMLElement {
   );
 }
 
+// ── Memory section ────────────────────────────────────────────────────────────
+
 /** Everything Mochi remembers: who saved each note, when, and a way to remove it. */
 function memorySection(): HTMLElement {
   const list = h("div", { class: "reminder-list" });
@@ -565,6 +567,43 @@ function memorySection(): HTMLElement {
   // Mochi can add notes while this window is open.
   window.addEventListener("focus", () => void refresh());
   window.setInterval(() => void refresh(), 10000);
+
+  async function add() {
+    const text = input.value.trim();
+    if (!text) return;
+    try {
+      await Bridge.memoryAdd(text);
+      input.value = "";
+      void refresh();
+    } catch (err) {
+      flash(String(err).replace(/^Error:\s*/, ""));
+    }
+  }
+  input.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") void add();
+  });
+
+  const clearBtn = h("button", {
+    class: "danger",
+    text: "Forget everything",
+    onclick: async () => {
+      if (!window.confirm("Delete everything Mochi remembers?")) return;
+      await Bridge.memoryClear();
+      void refresh();
+      flash("Memory cleared.");
+    },
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Memory" })),
+    h("div", { class: "hint", text: "Mochi keeps short notes about you in a file on this PC (memory.json) and reads them at the start of every chat. It saves what you ask it to remember, and picks up lasting facts on its own, but never passwords, keys or other secrets. Adding a note never changes the others." }),
+    list,
+    h("div", { class: "row" }, input, h("button", { class: "primary", text: "Add", onclick: () => void add() })),
+    h("div", { class: "row" }, clearBtn, status),
+  );
+}
 
 // ── Reminders & interruptions section ─────────────────────────────────────────
 

@@ -159,7 +159,8 @@ pub fn chat_url(base: &str, format: ApiFormat) -> String {
 
 /// Chat history in Anthropic blocks → a /chat/completions request body.
 /// Images become image_url parts; PDF documents are rejected with a clear
-/// message; tool_use blocks are dropped (web search is Anthropic-only).
+/// message; web search is Anthropic-only and is dropped, but the client-side
+/// `remember` tool round-trips as tool_calls / tool messages.
 pub fn openai_body(
     model: &str,
     system: &str,
@@ -182,7 +183,43 @@ pub fn openai_body(
 
         if role == "assistant" {
             let text = block_text(blocks);
-            messages.push(json!({ "role": "assistant", "content": text }));
+            let calls: Vec<Value> = blocks
+                .iter()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
+                .map(|b| {
+                    json!({
+                        "id": b.get("id").cloned().unwrap_or(Value::Null),
+                        "type": "function",
+                        "function": {
+                            "name": b.get("name").cloned().unwrap_or(Value::Null),
+                            "arguments": b.get("input").cloned().unwrap_or_else(|| json!({})).to_string(),
+                        },
+                    })
+                })
+                .collect();
+            if calls.is_empty() {
+                messages.push(json!({ "role": "assistant", "content": text }));
+            } else {
+                let content = if text.is_empty() { Value::Null } else { Value::String(text) };
+                messages.push(json!({ "role": "assistant", "content": content, "tool_calls": calls }));
+            }
+            continue;
+        }
+        if blocks.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("tool_result")) {
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                    continue;
+                }
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": block.get("tool_use_id").cloned().unwrap_or(Value::Null),
+                    "content": block.get("content").and_then(Value::as_str).unwrap_or(""),
+                }));
+            }
+            let text = block_text(blocks);
+            if !text.is_empty() {
+                messages.push(json!({ "role": "user", "content": text }));
+            }
             continue;
         }
         if blocks.iter().any(|b| b.get("type").and_then(Value::as_str) == Some("document")) {
@@ -381,6 +418,30 @@ mod tests {
         assert_eq!(messages[2]["role"], "assistant");
         assert_eq!(messages[2]["content"], "hello"); // tool_use dropped
         assert_eq!(body["max_tokens"], json!(100));
+    }
+
+    #[test]
+    fn openai_body_round_trips_the_remember_tool() {
+        let history = vec![
+            json!({ "role": "user", "content": [{ "type": "text", "text": "remember I like tea" }] }),
+            json!({ "role": "assistant", "content": [
+                { "type": "tool_use", "id": "call_1", "name": "remember", "input": { "note": "Likes tea" } },
+            ] }),
+            json!({ "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "call_1", "content": "Saved." },
+            ] }),
+        ];
+        let body = openai_body("m", "sys", &history, 100).unwrap();
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages[2]["role"], "assistant");
+        assert!(messages[2]["content"].is_null());
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "remember");
+        let args = messages[2]["tool_calls"][0]["function"]["arguments"].as_str().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(args).unwrap()["note"], "Likes tea");
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "call_1");
+        assert_eq!(messages[3]["content"], "Saved.");
     }
 
     #[test]

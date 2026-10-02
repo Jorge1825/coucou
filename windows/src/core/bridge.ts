@@ -20,6 +20,15 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+export interface MemoryNote {
+  id: number;
+  text: string;
+  /** Local time it was saved, YYYY-MM-DDTHH:MM. */
+  created: string;
+  /** "mochi" saved it itself; "user" typed it in the settings window. */
+  source: string;
+}
+
 export interface Reminder {
   id: number;
   text: string;
@@ -92,12 +101,16 @@ export const Bridge = {
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
   chatSend: (query: string, context: ChatContext | null) =>
-    callOrThrow<{ text: string }>("chat_send", { query, context }),
+    callOrThrow<{ text: string; remembered: boolean }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
   chatCancel: () => call<void>("chat_cancel"),
   remindersList: () => call<Reminder[]>("reminders_list"),
   remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
   memoryList: () => call<MemoryNote[]>("memory_list"),
+  /** Rejects with the reason when the note looks like a secret or is invalid. */
+  memoryAdd: (text: string) => callOrThrow<void>("memory_add", { text }),
+  memoryDelete: (id: number) => call<void>("memory_delete", { id }),
+  memoryClear: () => call<void>("memory_clear"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */

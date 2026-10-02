@@ -554,6 +554,11 @@ export class Island {
       State.lastActivity = performance.now();
     });
 
+    window.addEventListener("mochi-remembered", () => {
+      Sound.play("approve");
+      this.engine.triggerEmote("remember");
+    });
+
     void onDragDrop((e) => this.onDragDrop(e));
 
     // Outside Tauri (plain browser) drive the cursor from DOM events so the

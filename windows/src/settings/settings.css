@@ -265,6 +265,23 @@ select option {
   background: rgba(245, 165, 36, 0.13);
   color: #fbc06a;
 }
+/* ── Memory section ── */
+.memory-text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font: 400 12.5px/1.5 var(--font);
+}
+
+.memory-text:focus {
+  outline: 1px solid rgba(255, 255, 255, 0.25);
+}
+
 /* ── Reminders section ── */
 .reminder-list {
   display: flex;
@@ -297,6 +314,22 @@ select option {
   padding: 2px 9px;
   font-size: 15px;
   line-height: 1.2;
+}
+
+.memory-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font: 400 12.5px var(--font);
+}
+
+.memory-input:focus {
+  outline: 1px solid rgba(255, 255, 255, 0.25);
 }
 
 .reminder .origin {

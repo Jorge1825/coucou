@@ -6,6 +6,7 @@ mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod memory;
 mod pipe;
 mod proactive;
 mod providers;
@@ -282,6 +283,28 @@ fn reminders_list() -> Vec<reminders::Reminder> {
 #[tauri::command]
 fn reminders_delete(id: u64) -> Result<(), String> {
     reminders::delete(id)
+}
+
+/// Everything Mochi remembers, oldest first, for the settings window.
+#[tauri::command]
+fn memory_list() -> Vec<memory::Note> {
+    memory::list()
+}
+
+/// A note typed in the settings window. Refused if it looks like a secret.
+#[tauri::command]
+fn memory_add(text: String) -> Result<(), String> {
+    memory::add(&text, "user").map(|_| ())
+}
+
+#[tauri::command]
+fn memory_delete(id: u64) -> Result<(), String> {
+    memory::delete(id)
+}
+
+#[tauri::command]
+fn memory_clear() -> Result<(), String> {
+    memory::clear()
 }
 
 #[tauri::command]
