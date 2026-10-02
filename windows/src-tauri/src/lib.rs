@@ -7,7 +7,9 @@ mod integrations;
 mod island;
 mod log;
 mod pipe;
+mod proactive;
 mod providers;
+mod reminders;
 mod secrets;
 mod settings;
 mod tray;
@@ -271,6 +273,17 @@ async fn chat_send(
     claude::send(&chat, &target, &settings.model, query, context).await
 }
 
+/// Pending reminders, soonest first, for the settings window.
+#[tauri::command]
+fn reminders_list() -> Vec<reminders::Reminder> {
+    reminders::load()
+}
+
+#[tauri::command]
+fn reminders_delete(id: u64) -> Result<(), String> {
+    reminders::delete(id)
+}
+
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
@@ -422,6 +435,13 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            chat_cancel,
+            memory_list,
+            memory_add,
+            memory_delete,
+            memory_clear,
+            reminders_list,
+            reminders_delete,
             ingest_file,
             secret_present,
             secret_set,
@@ -449,6 +469,7 @@ pub fn run() {
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            proactive::start(handle.clone());
             integrations::start(handle.clone());
             Ok(())
         })

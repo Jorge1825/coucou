@@ -70,6 +70,20 @@ async function main() {
     }
   });
 
+  // Mochi speaking up on its own: a reminder coming due, or a check-in worth
+  // an interruption. Shown even when no window of ours is in the foreground.
+  await onEvent<{ text: string; kind: string }>("nudge", ({ text }) => {
+    if (State.paused) return;
+    State.noteMessage = text;
+    // The attention chime the approvals use: a reminder has to be heard.
+    Sound.resume();
+    Sound.play("approval");
+    island.alert("note");
+    island.attention();
+    // Let it close by itself if the user never comes near it.
+    island.fsm.mouseLeft();
+  });
+
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
   // The settings window writes preferences; apply them here without a restart.

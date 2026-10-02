@@ -20,6 +20,13 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T |
   }
 }
 
+export interface Reminder {
+  id: number;
+  text: string;
+  /** Local time, YYYY-MM-DDTHH:MM. */
+  due: string;
+}
+
 export interface BootInfo {
   settings: Settings;
   /** Logical screen rect of the monitor the island lives on. */
@@ -87,6 +94,10 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  chatCancel: () => call<void>("chat_cancel"),
+  remindersList: () => call<Reminder[]>("reminders_list"),
+  remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
+  memoryList: () => call<MemoryNote[]>("memory_list"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */

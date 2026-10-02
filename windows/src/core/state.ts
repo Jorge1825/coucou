@@ -98,6 +98,10 @@ export interface Settings {
   providerUrl: string;
   /** API format for the custom preset: "anthropic" or "openai". */
   providerFormat: string;
+  /** Mochi may interrupt on its own (periodic check-in with the model). */
+  proactive: boolean;
+  /** Minutes between check-ins. */
+  proactiveMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -115,6 +119,10 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: "anthropic",
   providerUrl: "",
   providerFormat: "openai",
+  mochiHat: "none",
+  mochiFace: "none",
+  proactive: false,
+  proactiveMinutes: 30,
 };
 
 type Listener = () => void;

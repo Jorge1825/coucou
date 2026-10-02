@@ -334,6 +334,11 @@ export class Island {
     this.fsm.reveal();
   }
 
+  /** Mochi waves a hand to get the user's attention (a reminder just popped up). */
+  attention() {
+    this.engine.attention();
+  }
+
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
     this.fsm.pinned = false;

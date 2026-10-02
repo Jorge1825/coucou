@@ -495,6 +495,139 @@ function generalSection(): HTMLElement {
   );
 }
 
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Mochi" })),
+    h("div", { class: "mochi-edit" },
+      canvas,
+      h("div", { class: "mochi-pickers" },
+        h("div", { class: "row" },
+          h("label", { text: "Hat" }),
+          picker(HATS, () => settings.mochiHat, (v) => { settings.mochiHat = v; }),
+        ),
+        h("div", { class: "row" },
+          h("label", { text: "Face" }),
+          picker(FACES, () => settings.mochiFace, (v) => { settings.mochiFace = v; }),
+        ),
+        h("div", { class: "row" },
+          h("label", { text: "Preview" }),
+          h("div", { class: "chips" },
+            h("button", { class: "chip", text: "Reminder wave", onclick: () => { playSound("approval"); engine.attention(); } }),
+            h("button", { class: "chip", text: "Saved a note", onclick: () => { playSound("approve"); engine.triggerEmote("remember"); } }),
+            h("button", { class: "chip", text: "Greeting", onclick: () => engine.greet() }),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/** Everything Mochi remembers: who saved each note, when, and a way to remove it. */
+function memorySection(): HTMLElement {
+  const list = h("div", { class: "reminder-list" });
+  const status = h("span", { class: "hint" });
+  const input = h("input", {
+    type: "text",
+    class: "memory-input",
+    placeholder: "Add something for Mochi to remember…",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+
+  const flash = (text: string) => {
+    status.textContent = text;
+    window.setTimeout(() => { if (status.textContent === text) status.textContent = ""; }, 5000);
+  };
+
+  async function refresh() {
+    const notes = (await Bridge.memoryList()) ?? [];
+    clear(list);
+    if (notes.length === 0) {
+      list.append(h("div", { class: "hint", text: "Nothing yet. Tell Mochi \"remember that…\", or let it pick up what matters." }));
+      return;
+    }
+    for (const n of notes) {
+      list.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: n.created.replace("T", " ") }),
+          h("span", { class: "what", text: n.text }),
+          h("span", { class: "origin", text: n.source === "mochi" ? "Mochi" : "you" }),
+          h("button", {
+            title: "Forget this",
+            text: "×",
+            onclick: async () => { await Bridge.memoryDelete(n.id); void refresh(); },
+          }),
+        ),
+      );
+    }
+  }
+  void refresh();
+  // Mochi can add notes while this window is open.
+  window.addEventListener("focus", () => void refresh());
+  window.setInterval(() => void refresh(), 10000);
+
+// ── Reminders & interruptions section ─────────────────────────────────────────
+
+function formatDue(due: string): string {
+  // "2026-10-02T15:00" → "2026-10-02 15:00"
+  return due.replace("T", " ");
+}
+
+/** What Mochi may do on its own: pending reminders and unprompted check-ins. */
+function remindersSection(): HTMLElement {
+  const list = h("div", { class: "reminder-list" });
+
+  async function refresh() {
+    const items = (await Bridge.remindersList()) ?? [];
+    clear(list);
+    if (items.length === 0) {
+      list.append(h("div", { class: "hint", text: "No reminders pending. Ask Mochi to remind you of something, or just mention it in the chat." }));
+      return;
+    }
+    for (const r of items) {
+      list.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: formatDue(r.due) }),
+          h("span", { class: "what", text: r.text }),
+          h("button", {
+            title: "Delete",
+            text: "×",
+            onclick: async () => { await Bridge.remindersDelete(r.id); void refresh(); },
+          }),
+        ),
+      );
+    }
+  }
+  void refresh();
+  // Mochi may add one while this window is open.
+  window.setInterval(() => void refresh(), 15000);
+
+  const minutes = h("select", {}) as HTMLSelectElement;
+  for (const m of [15, 30, 60, 120]) {
+    minutes.append(h("option", { value: String(m), text: m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? "s" : ""}` }));
+  }
+  minutes.value = String(settings.proactiveMinutes);
+  minutes.addEventListener("change", () => {
+    settings.proactiveMinutes = Number(minutes.value) || 30;
+    void save();
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Reminders and interruptions" })),
+    h("div", { class: "hint", text: "Mochi sets reminders when you ask, and on its own when you mention something with a time. They pop up in the island at that moment, even if you are in another app." }),
+    list,
+    h("div", { class: "row" },
+      h("label", { text: "Interrupt me on its own" }),
+      toggle(settings.proactive, (v) => { settings.proactive = v; void save(); }),
+      minutes,
+      h("span", { class: "hint", text: "between check-ins" }),
+    ),
+    h("div", { class: "hint", text: "Off by default. When on, every so often Mochi sends the clock, its saved notes and your pending reminders to your AI provider and decides whether something deserves an interruption. It never sends your screen, files or chats, stays quiet from 22:00 to 08:00, and usually says nothing." }),
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -522,6 +655,9 @@ async function main() {
     claudeSection(status),
     apiSection(present),
     integrationsSection(present),
+    mochiSection(),
+    memorySection(),
+    remindersSection(),
     generalSection(),
     h("div", {
       class: "hint",

@@ -352,6 +352,35 @@ export class BotEngine {
     }, 1750);
   }
 
+  /**
+   * Hand up and waving to get the user's attention — used when a reminder pops
+   * up. Same hand as the greeting, but it waves longer and hops first.
+   */
+  attention() {
+    const t = now();
+    const tok = ++this.greetToken;
+    this.waveStart = t + 0.5;
+    this.waveUntil = t + 2.9;
+
+    this.eyeOverride = "happy";
+    this.eyeOverrideUntil = t + 3.2;
+    this.anim("oy", [[-0.14, 160, Ease.out], [0, 320, Ease.back], [-0.08, 140, Ease.out], [0, 280, Ease.back]]);
+    this.anim("tilt", [[0.08, 200, Ease.out], [-0.08, 400, Ease.inOut], [0.08, 400, Ease.inOut], [0, 300, Ease.inOut]]);
+
+    setTimeout(() => {
+      if (this.greetToken !== tok) return;
+      this.anim("hands", [[1, 260, Ease.out]]);
+      this.anim("sy", [[0.95, 100, Ease.out], [1.0, 260, Ease.back]]);
+      this.anim("sx", [[1.04, 100, Ease.out], [1.0, 260, Ease.back]]);
+    }, 300);
+    setTimeout(() => { if (this.greetToken === tok) this.blink(); }, 1200);
+    setTimeout(() => {
+      if (this.greetToken !== tok) return;
+      this.waveUntil = 0;
+      this.anim("hands", [[0, 220, Ease.inOut]]);
+    }, 2900);
+  }
+
   interruptGreet() {
     if (this.hands <= 0.01 && now() >= this.waveUntil) return;
     this.greetToken++;
