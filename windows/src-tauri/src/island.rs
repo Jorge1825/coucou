@@ -17,7 +17,7 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::System::Ole::RevokeDragDrop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
+use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW, GetPropW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Logical size of the full window — the largest island view, like the macOS panel.
 pub const PANEL_W: f64 = 720.0;
-pub const PANEL_H: f64 = 320.0;
+pub const PANEL_H: f64 = 380.0;
 /// Logical size of the invisible strip that wakes the island when it is hidden.
 pub const STRIP_W: f64 = 240.0;
 pub const STRIP_H: f64 = 6.0;
@@ -348,11 +348,59 @@ unsafe extern "system" fn revoke_render_widget(hwnd: HWND, _: LPARAM) -> BOOL {
     let len = unsafe { GetClassNameW(hwnd, &mut name) };
     if len > 0 {
         let class = String::from_utf16_lossy(&name[..len as usize]);
-        if class == "Chrome_RenderWidgetHostHWND" {
-            let _ = unsafe { RevokeDragDrop(hwnd) };
+        let revoked = if class == "Chrome_RenderWidgetHostHWND" {
+            Some(unsafe { RevokeDragDrop(hwnd) })
+        } else {
+            None
+        };
+        // TEMP diagnostics: first few passes only.
+        static PASSES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if PASSES.fetch_add(1, Ordering::Relaxed) < 40 {
+            let has_target =
+                !unsafe { GetPropW(hwnd, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
+            crate::log::line(format!(
+                "dnd-diag child {:?} class={class} ole_target={has_target} revoke_ok={:?}",
+                hwnd.0,
+                revoked.map(|r| r.is_ok())
+            ));
         }
     }
     true.into()
+}
+
+/// Re-runs `unblock_webview_drops` now and again shortly after, because WebView2
+/// can re-register its own target once a resize or a late-created render widget
+/// settles. The cursor poll only does this on a button press, and it is parked
+/// while the island is hidden — which is exactly when a drag from Explorer starts.
+pub fn schedule_unblock_drops(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        for delay_ms in [0u64, 250, 1000] {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            let h = handle.clone();
+            let _ = handle.run_on_main_thread(move || unblock_webview_drops(&h));
+        }
+    });
+}
+
+/// TEMP diagnostics: logs the window under the cursor and its parents, with
+/// whether each has an OLE drop target registered.
+fn log_hit_chain(cx: f64, cy: f64) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetParent, WindowFromPoint};
+    let mut cur = unsafe { WindowFromPoint(POINT { x: cx as i32, y: cy as i32 }) };
+    let mut out = String::new();
+    for _ in 0..8 {
+        if cur.0.is_null() {
+            break;
+        }
+        let mut name = [0u16; 64];
+        let len = unsafe { GetClassNameW(cur, &mut name) };
+        let class = String::from_utf16_lossy(&name[..len.max(0) as usize]);
+        let target = !unsafe { GetPropW(cur, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
+        out.push_str(&format!(" > {class}[target={target}]"));
+        cur = unsafe { GetParent(cur) }.unwrap_or_default();
+    }
+    crate::log::line(format!("dnd-diag hit chain:{out}"));
 }
 
 /// True while the left mouse button is held — the only signal we get that a
@@ -384,6 +432,13 @@ fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
         .ok()
         .flatten()
         .or_else(|| monitors.into_iter().next())
+}
+
+/// Position and size, in physical pixels, of the display the island lives on.
+pub fn target_rect(app: &AppHandle, pref: &str) -> Option<(i32, i32, i32, i32)> {
+    let m = target_monitor(app, pref)?;
+    let (p, s) = (m.position(), m.size());
+    Some((p.x, p.y, s.width as i32, s.height as i32))
 }
 
 pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
@@ -483,6 +538,46 @@ fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
     Some(HWND(raw as *mut _))
 }
 
+/// Shows the system "open file" dialog, owned by the island so it comes to the
+/// front. Blocks until the user chooses or cancels, so call it off the UI thread.
+pub fn pick_file(app: &AppHandle) -> Option<String> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH,
+    };
+
+    let owner = window(app).as_ref().and_then(hwnd_of);
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let path = (|| -> Option<String> {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
+                    .map_err(|e| crate::log::line(format!("pick: cannot create dialog: {e}")))
+                    .ok()?;
+            let options = dialog.GetOptions().ok()?;
+            dialog.SetOptions(options | FOS_FORCEFILESYSTEM).ok()?;
+            crate::log::line("pick: showing dialog");
+            // Err on cancel (HRESULT_FROM_WIN32(ERROR_CANCELLED)).
+            dialog
+                .Show(owner)
+                .map_err(|e| crate::log::line(format!("pick: dialog returned {e}")))
+                .ok()?;
+            let item = dialog.GetResult().ok()?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+            let path = name.to_string().ok();
+            CoTaskMemFree(Some(name.0 as *const _));
+            path
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        path
+    }
+}
+
 /// WS_EX_NOACTIVATE keeps clicks from stealing focus; WS_EX_TOOLWINDOW keeps the
 /// island out of Alt-Tab.
 pub fn make_non_activating(win: &WebviewWindow) {
@@ -526,6 +621,7 @@ fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
 pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
     std::thread::spawn(move || {
         let mut was_down = false;
+        let mut was_dragging = false;
         // Remembered across wakes so a display change while hidden is noticed the
         // moment the island comes back.
         let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
@@ -599,6 +695,12 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     && x <= size.0
                     && y >= 0.0
                     && y <= size.1;
+
+                // TEMP diagnostics: what window would OLE hit under the cursor?
+                if dragging && !was_dragging {
+                    log_hit_chain(cx, cy);
+                }
+                was_dragging = dragging;
 
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {

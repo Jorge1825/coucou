@@ -73,6 +73,9 @@ impl Chat {
 pub enum ChatContext {
     File { name: String, path: String },
     Window { app_name: String, title: String, url: Option<String> },
+    /// A screenshot the user asked Mochi to look at. Unlike file/window context
+    /// it can ride along with any message, not just the first.
+    Screen { path: String },
 }
 
 #[derive(Serialize)]
@@ -438,13 +441,22 @@ async fn send_turn(
 
     // File / window context rides along with the first message only, exactly
     // like ClaudeService.chat().
-    if chat.is_empty() {
+    if let Some(ChatContext::Screen { path }) = &context {
+        match file_block(path) {
+            Some(block) => {
+                content.push(block);
+                content.push(json!({ "type": "text", "text": "This is a screenshot of the user's screen, taken at their request." }));
+            }
+            None => return Err("Couldn't read the screenshot.".into()),
+        }
+    } else if chat.is_empty() {
         match &context {
             Some(ChatContext::File { name, path }) => {
                 if let Some(block) = file_block(path) {
                     content.push(block);
                 }
-                content.push(json!({ "type": "text", "text": format!("File: {name}") }));
+                // The real name can carry client numbers, people, dates…
+                content.push(json!({ "type": "text", "text": format!("File: {}", anonymous_name(path, name)) }));
             }
             Some(ChatContext::Window { app_name, title, url }) => {
                 let mut text = format!("Context — App: {app_name}, Window: {title}");
@@ -453,7 +465,7 @@ async fn send_turn(
                 }
                 content.push(json!({ "type": "text", "text": text }));
             }
-            None => {}
+            Some(ChatContext::Screen { .. }) | None => {}
         }
     }
     content.push(json!({ "type": "text", "text": query }));
@@ -559,7 +571,7 @@ fn file_block(path: &str) -> Option<Value> {
     };
 
     if let Some((block_type, media)) = media_type {
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = strip_metadata(&ext, std::fs::read(path).ok()?);
         return Some(json!({
             "type": block_type,
             "source": { "type": "base64", "media_type": media, "data": base64(&bytes) },
@@ -572,6 +584,97 @@ fn file_block(path: &str) -> Option<Value> {
     }
     let text = std::fs::read_to_string(path).ok()?;
     Some(json!({ "type": "text", "text": format!("File contents:\n{text}") }))
+}
+
+/// What the model is told the file is called: just its kind, never the real name.
+fn anonymous_name(path: &str, fallback: &str) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .or_else(|| std::path::Path::new(fallback).extension())
+        .and_then(|e| e.to_str())
+        .filter(|e| e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(str::to_lowercase);
+    match ext {
+        Some(ext) => format!("attachment.{ext}"),
+        None => "attachment".to_string(),
+    }
+}
+
+/// Removes personal metadata (EXIF/GPS, camera, XMP, comments, timestamps) from
+/// JPEG and PNG bytes. Pixels are untouched. Other formats, and files that don't
+/// parse, are returned as they are.
+fn strip_metadata(ext: &str, bytes: Vec<u8>) -> Vec<u8> {
+    let stripped = match ext {
+        "jpg" | "jpeg" => strip_jpeg(&bytes),
+        "png" => strip_png(&bytes),
+        _ => None,
+    };
+    stripped.unwrap_or(bytes)
+}
+
+/// Keeps every JPEG segment except APP1…APP13/15 (EXIF, XMP, IPTC, ICC…) and
+/// comments. APP0 (JFIF) and APP14 (Adobe colour transform) are needed to decode.
+fn strip_jpeg(b: &[u8]) -> Option<Vec<u8>> {
+    if b.len() < 4 || b[0] != 0xFF || b[1] != 0xD8 {
+        return None;
+    }
+    let mut out = vec![0xFF, 0xD8];
+    let mut i = 2;
+    while i + 1 < b.len() {
+        if b[i] != 0xFF {
+            return None;
+        }
+        let marker = b[i + 1];
+        if marker == 0xFF {
+            i += 1; // fill byte
+            continue;
+        }
+        // Standalone markers carry no length.
+        if marker == 0x01 || (0xD0..=0xD8).contains(&marker) {
+            out.extend_from_slice(&b[i..i + 2]);
+            i += 2;
+            continue;
+        }
+        if marker == 0xDA || marker == 0xD9 {
+            // Entropy-coded data (or EOI): copy the rest untouched.
+            out.extend_from_slice(&b[i..]);
+            return Some(out);
+        }
+        let len = u16::from_be_bytes([*b.get(i + 2)?, *b.get(i + 3)?]) as usize;
+        let end = i + 2 + len;
+        if len < 2 || end > b.len() {
+            return None;
+        }
+        let personal = (0xE1..=0xEF).contains(&marker) && marker != 0xEE || marker == 0xFE;
+        if !personal {
+            out.extend_from_slice(&b[i..end]);
+        }
+        i = end;
+    }
+    None
+}
+
+/// Drops the PNG chunks that hold text, EXIF and timestamps.
+fn strip_png(b: &[u8]) -> Option<Vec<u8>> {
+    const SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if b.len() < 8 || b[..8] != SIG {
+        return None;
+    }
+    let mut out = SIG.to_vec();
+    let mut i = 8;
+    while i + 12 <= b.len() {
+        let len = u32::from_be_bytes(b[i..i + 4].try_into().ok()?) as usize;
+        let end = i.checked_add(12)?.checked_add(len)?;
+        if end > b.len() {
+            return None;
+        }
+        let kind = &b[i + 4..i + 8];
+        if !matches!(kind, b"tEXt" | b"zTXt" | b"iTXt" | b"eXIf" | b"tIME") {
+            out.extend_from_slice(&b[i..end]);
+        }
+        i = end;
+    }
+    (i == b.len()).then_some(out)
 }
 
 /// Small standalone base64 encoder — not worth another dependency.
@@ -596,7 +699,58 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::base64;
+    use super::{anonymous_name, base64, strip_metadata};
+
+    #[test]
+    fn anonymous_name_keeps_only_the_extension() {
+        assert_eq!(anonymous_name("C:/x/COT-2026-558.PDF", "COT-2026-558.PDF"), "attachment.pdf");
+        assert_eq!(anonymous_name("C:/x/Makefile", "Makefile"), "attachment");
+    }
+
+    #[test]
+    fn jpeg_loses_exif_and_comments_but_keeps_jfif_and_scan() {
+        let jpeg = vec![
+            0xFF, 0xD8, // SOI
+            0xFF, 0xE0, 0x00, 0x04, 0x01, 0x02, // APP0 (kept)
+            0xFF, 0xE1, 0x00, 0x06, b'E', b'x', b'i', b'f', // APP1 EXIF (dropped)
+            0xFF, 0xFE, 0x00, 0x04, b'h', b'i', // COM (dropped)
+            0xFF, 0xEE, 0x00, 0x03, 0x09, // APP14 (kept)
+            0xFF, 0xDA, 0x00, 0x02, 0x11, 0x22, 0xFF, 0xD9, // SOS + data + EOI
+        ];
+        let out = strip_metadata("jpg", jpeg.clone());
+        assert!(!out.windows(4).any(|w| w == b"Exif"));
+        assert!(out.starts_with(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(out.ends_with(&[0xFF, 0xDA, 0x00, 0x02, 0x11, 0x22, 0xFF, 0xD9]));
+        assert_eq!(out.len(), jpeg.len() - 8 - 6); // EXIF (8 bytes) and COM (6 bytes) are gone
+    }
+
+    #[test]
+    fn png_loses_text_and_time_chunks() {
+        fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+            let mut c = (data.len() as u32).to_be_bytes().to_vec();
+            c.extend_from_slice(kind);
+            c.extend_from_slice(data);
+            c.extend_from_slice(&[0, 0, 0, 0]); // CRC is not checked here
+            c
+        }
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend(chunk(b"IHDR", &[0; 13]));
+        png.extend(chunk(b"tEXt", b"Author\0Ana"));
+        png.extend(chunk(b"tIME", &[0; 7]));
+        png.extend(chunk(b"IDAT", &[1, 2, 3]));
+        png.extend(chunk(b"IEND", &[]));
+        let out = strip_metadata("png", png);
+        assert!(!out.windows(4).any(|w| w == b"tEXt" || w == b"tIME"));
+        assert!(out.windows(4).any(|w| w == b"IDAT"));
+        assert!(out.windows(4).any(|w| w == b"IEND"));
+    }
+
+    #[test]
+    fn malformed_images_are_returned_unchanged() {
+        let junk = vec![1, 2, 3, 4, 5];
+        assert_eq!(strip_metadata("jpg", junk.clone()), junk);
+        assert_eq!(strip_metadata("png", junk.clone()), junk);
+    }
 
     #[test]
     fn base64_matches_rfc4648_vectors() {

@@ -11,6 +11,7 @@ mod pipe;
 mod proactive;
 mod providers;
 mod reminders;
+mod screen;
 mod secrets;
 mod settings;
 mod tray;
@@ -104,6 +105,8 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     island::set_ignore_cursor(&app, false);
     shared.gate.forget_ignore_state();
     shared.gate.set_active(!collapsed);
+    // The poll is parked while collapsed, so it can't prepare the drop target.
+    island::schedule_unblock_drops(&app);
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.
@@ -262,6 +265,25 @@ fn hooks_apply(
     };
     let _ = app.emit("settings-changed", updated);
     Ok(backup)
+}
+
+/// One screenshot of the island's display, only when the user asks for it.
+#[tauri::command]
+async fn capture_screen(app: AppHandle, shared: State<'_, Shared>) -> Result<DroppedFile, String> {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let rect = island::target_rect(&app, &pref).ok_or("No screen to capture.")?;
+    tauri::async_runtime::spawn_blocking(move || screen::capture(rect))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Native file chooser for the drop zone; `None` when the user cancels.
+#[tauri::command]
+async fn pick_file(app: AppHandle) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || island::pick_file(&app))
+        .await
+        .ok()
+        .flatten()
 }
 
 #[tauri::command]
@@ -497,6 +519,8 @@ pub fn run() {
             reminders_list,
             reminders_delete,
             ingest_file,
+            pick_file,
+            capture_screen,
             secret_present,
             secret_set,
             secret_clear,
@@ -520,6 +544,7 @@ pub fn run() {
             gate.collapsed.store(false, Ordering::Relaxed);
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
+            island::schedule_unblock_drops(&handle);
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);

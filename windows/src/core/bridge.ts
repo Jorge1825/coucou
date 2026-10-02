@@ -115,6 +115,10 @@ export const Bridge = {
   memoryClear: () => call<void>("memory_clear"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  /** One screenshot, taken right now because the user pressed the eye button. */
+  captureScreen: () => callOrThrow<DroppedFile>("capture_screen"),
+  /** Native "open file" dialog. Resolves with the chosen path, or null if cancelled. */
+  pickFile: () => call<string | null>("pick_file"),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),
@@ -138,7 +142,8 @@ export interface IntegrationUpdate {
 
 export type ChatContext =
   | { kind: "file"; name: string; path: string }
-  | { kind: "window"; appName: string; title: string; url?: string };
+  | { kind: "window"; appName: string; title: string; url?: string }
+  | { kind: "screen"; path: string };
 
 export interface DroppedFile {
   name: string;

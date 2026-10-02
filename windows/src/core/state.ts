@@ -153,6 +153,8 @@ class AppState {
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;
+  /** Screenshot the user asked for; goes out with the next chat message, once. */
+  pendingScreen: { path: string } | null = null;
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];

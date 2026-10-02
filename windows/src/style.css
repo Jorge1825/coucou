@@ -904,6 +904,27 @@ input[type="range"]::-webkit-slider-thumb {
   transition: transform 0.08s ease-out;
 }
 
+.look-btn {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+
+.look-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.chip.removable {
+  cursor: default;
+}
+
 .send-btn:active {
   transform: scale(0.94);
 }

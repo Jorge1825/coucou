@@ -25,6 +25,11 @@ const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 
+/** Characters in the last exchange: what decides whether the chat card needs more height. */
+function chatChars(): number {
+  return State.chatHistory.slice(-2).reduce((n, m) => n + m.content.length, 0);
+}
+
 /** The three views the drop sequence owns; leaving them stops the engine. */
 const UPLOAD_VIEWS: ReadonlySet<IslandViewName> = new Set(["upload", "uploading", "choose"]);
 
@@ -70,6 +75,7 @@ export class Island {
   // Rust starts the window at full size so the launch greeting has room.
   private collapsed = false;
   private collapseTimer: number | null = null;
+  private pickingFile = false;
   private wasInIsland = false;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
@@ -168,6 +174,7 @@ export class Island {
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
+      pickFile: () => void this.pickFile(),
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });
@@ -390,6 +397,23 @@ export class Island {
     }
   }
 
+  /** Click on the drop zone: choose a file with the system dialog. */
+  private async pickFile() {
+    void Bridge.log(`pick: click (paused=${State.paused}, busy=${this.pickingFile})`);
+    if (State.paused || this.pickingFile) return;
+    this.pickingFile = true;
+    // The dialog takes focus away; without the pin the island would auto-close.
+    this.fsm.pinned = true;
+    try {
+      const path = await Bridge.pickFile();
+      void Bridge.log(`pick: dialog closed, chosen=${path ? "yes" : "no"}`);
+      if (path) this.swallow(path);
+    } finally {
+      this.pickingFile = false;
+      this.fsm.pinned = State.isPinned;
+    }
+  }
+
   /**
    * Mochi eats the file. Nothing here waits on the file system: the copy into
    * the inbox runs in the background and swaps the path in when it lands, so a
@@ -402,6 +426,9 @@ export class Island {
     State.chatHistory = [];
     void Bridge.chatReset();
 
+    // A drag has already activated the sequence on entry; picking a file with the
+    // dialog hasn't, and an inactive sequence draws a bar frozen at 0 %.
+    if (!UploadSeq.isActive) UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;
     this.uploadDone = false;
@@ -461,7 +488,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock, chatChars());
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -606,6 +633,15 @@ export class Island {
       this.watchForDrag(e);
     });
 
+    // Once a file has hovered the island, the drop card is drawn on a canvas and
+    // the HTML card underneath stops taking clicks — so the "click to choose a
+    // file" of the HTML card has to be offered from here too.
+    this.islandEl.addEventListener("click", (e) => {
+      if (State.view !== "upload" || !this.uploadActive || UploadSeq.dropped) return;
+      if (this.header.el.contains(e.target as Node)) return;
+      void this.pickFile();
+    });
+
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && State.mode === "expanded" && !State.isPinned) this.collapse();
       State.lastActivity = performance.now();
@@ -615,6 +651,17 @@ export class Island {
       Sound.play("approve");
       this.engine.triggerEmote("remember");
     });
+
+    // Without preventDefault() on dragenter/dragover the page refuses every drop
+    // (the "not allowed" cursor). The file itself is handled by Tauri's native
+    // drag-drop event below; this only tells the page that dropping is fine.
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      window.addEventListener(type, (e) => {
+        e.preventDefault();
+        const dt = (e as DragEvent).dataTransfer;
+        if (dt) dt.dropEffect = "copy";
+      });
+    }
 
     void onDragDrop((e) => this.onDragDrop(e));
 
@@ -988,6 +1035,6 @@ export class Island {
   }
 
   get chatHeight() {
-    return chatPromptHeight(State.chatHistory.length);
+    return chatPromptHeight(State.chatHistory.length, chatChars());
   }
 }
