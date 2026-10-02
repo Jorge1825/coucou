@@ -5,7 +5,7 @@
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { PROVIDERS, providerDef } from "../core/providers";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { DEFAULT_SETTINGS, OPACITY_MIN, clampOpacity, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 import { BotEngine } from "../mochi/engine";
 import { Sound } from "../core/sound";
@@ -439,6 +439,96 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
 }
 
+// ── Transparency section ──────────────────────────────────────────────────────
+
+type OpacityKey = "islandOpacity" | "cardOpacity" | "idleOpacity";
+
+const TRANSPARENCY_PRESETS: { label: string; values: Record<OpacityKey, number> }[] = [
+  { label: "Solid", values: { islandOpacity: 1, cardOpacity: 1, idleOpacity: 1 } },
+  { label: "Glass", values: { islandOpacity: 0.75, cardOpacity: 0.55, idleOpacity: 1 } },
+  { label: "Ghost", values: { islandOpacity: 0.55, cardOpacity: 0.35, idleOpacity: 0.5 } },
+];
+
+/** Island background, cards and fade-when-away. Changes show live on every display. */
+function transparencySection(): HTMLElement {
+  let saveTimer: number | null = null;
+  // Sliders fire on every pixel: the islands update at once, the file a beat later.
+  const saveSoon = () => {
+    if (saveTimer != null) window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null;
+      void save();
+    }, 150);
+  };
+
+  const sliders: { key: OpacityKey; input: HTMLInputElement; out: HTMLElement }[] = [];
+
+  function slider(key: OpacityKey, min: number, label: string, hint: string): HTMLElement {
+    const input = h("input", {
+      type: "range", min: String(min), max: "1", step: "0.05",
+      value: String(clampOpacity(settings[key], min)),
+    }) as HTMLInputElement;
+    const out = h("span", { class: "hint", style: "min-width:38px;text-align:right" });
+    const show = () => { out.textContent = `${Math.round(Number(input.value) * 100)} %`; };
+    show();
+    input.addEventListener("input", () => {
+      settings[key] = Number(input.value);
+      show();
+      markPreset();
+      saveSoon();
+    });
+    sliders.push({ key, input, out });
+    return h("div", { class: "row", title: hint },
+      h("label", { text: label }),
+      input,
+      out,
+    );
+  }
+
+  const presets = h("div", { class: "chips" });
+  const presetButtons = TRANSPARENCY_PRESETS.map((p) => {
+    const b = h("button", {
+      class: "chip",
+      text: p.label,
+      onclick: () => {
+        Object.assign(settings, p.values);
+        for (const s of sliders) {
+          s.input.value = String(settings[s.key]);
+          s.out.textContent = `${Math.round(settings[s.key] * 100)} %`;
+        }
+        markPreset();
+        void save();
+      },
+    });
+    return { p, b };
+  });
+  function markPreset() {
+    for (const { p, b } of presetButtons) {
+      const on = (Object.keys(p.values) as OpacityKey[]).every(
+        (k) => Math.abs(settings[k] - p.values[k]) < 0.001,
+      );
+      b.classList.toggle("on", on);
+    }
+  }
+  presets.append(...presetButtons.map((x) => x.b));
+
+  const rows = [
+    slider("islandOpacity", OPACITY_MIN.island, "Island background", "the black shape"),
+    slider("cardOpacity", OPACITY_MIN.card, "Cards", "panels inside the island"),
+    slider("idleOpacity", OPACITY_MIN.idle, "When away", "whole island while the mouse is elsewhere"),
+  ];
+  markPreset();
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Transparency" })),
+    h("div", { class: "hint", text: "Background and cards only change the panels — text and Mochi stay sharp. “When away” fades the whole island until the mouse comes back." }),
+    h("div", { class: "row" }, h("label", { text: "Preset" }), presets),
+    ...rows,
+  );
+}
+
 // ── General section ───────────────────────────────────────────────────────────
 
 function generalSection(): HTMLElement {
@@ -464,12 +554,14 @@ function generalSection(): HTMLElement {
 
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
+    h("option", { value: "all", text: "Every display" }),
     h("option", { value: "primary", text: "Main display" }),
     h("option", { value: "cursor", text: "Display under the cursor" }),
   );
-  screen.value = settings.screen;
+  screen.value = settings.allScreens ? "all" : settings.screen;
   screen.addEventListener("change", () => {
-    settings.screen = screen.value as Settings["screen"];
+    settings.allScreens = screen.value === "all";
+    if (!settings.allScreens) settings.screen = screen.value as Settings["screen"];
     void save();
   });
 
@@ -587,7 +679,13 @@ function mochiSection(): HTMLElement {
             h("button", { class: "chip", text: "Reminder wave", onclick: () => { playSound("approval"); engine.attention(); } }),
             h("button", { class: "chip", text: "Saved a note", onclick: () => { playSound("approve"); engine.triggerEmote("remember"); } }),
             h("button", { class: "chip", text: "Greeting", onclick: () => engine.greet() }),
+            h("button", { class: "chip", text: "Listening", onclick: () => engine.setMusic(!engine.music) }),
           ),
+        ),
+        h("div", { class: "row" },
+          h("label", { text: "Spotify" }),
+          toggle(settings.spotify, (v) => { settings.spotify = v; void save(); }),
+          h("span", { class: "hint", text: "Headphones, now playing and controls" }),
         ),
       ),
     ),
@@ -766,6 +864,7 @@ async function main() {
     apiSection(present),
     integrationsSection(present),
     mochiSection(),
+    transparencySection(),
     memorySection(),
     remindersSection(),
     generalSection(),

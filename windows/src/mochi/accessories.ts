@@ -53,10 +53,97 @@ export function drawAccessories(
   R: number,
   rx: number,
   ry: number,
+  /** Beat pulse 0…1 while music plays (headphones on), null otherwise. */
+  headphones: number | null = null,
 ) {
   if (face !== "none") drawFace(x, face, pose, R, rx, ry);
+  if (headphones != null) drawHeadphones(x, headphones, pose, R, rx, ry);
   if (hat !== "none") drawHat(x, hat, pose, R, rx, ry);
 }
+
+const PHONE_DARK = "#1A1412";
+const PHONE_SHELL = "#2A2A30";
+const PHONE_ACCENT = "#1ED760";
+
+/**
+ * Over-ear headphones: a band over the top of the head and a cup on each side.
+ * The cups follow the yaw (the far one tucks behind the body) and thump on the beat.
+ */
+function drawHeadphones(
+  x: CanvasRenderingContext2D,
+  pulse: number,
+  pose: Pose,
+  R: number,
+  rx: number,
+  ry: number,
+) {
+  const shift = Math.sin(pose.yaw) * rx * 0.22;
+  const cupW = R * 0.3 * (1 + pulse * 0.08);
+  const cupH = R * 0.62 * (1 + pulse * 0.08);
+  const cupY = ry * 0.02;
+  const cups = [-1, 1].map((sd) => ({
+    sd,
+    cx: sd * rx * 0.98 + shift * 0.6,
+    // The cup on the side Mochi turns away from shrinks behind the body.
+    k: clamp01(1 - Math.max(0, -sd * Math.sin(pose.yaw)) * 1.4),
+  }));
+
+  x.save();
+  x.lineCap = "round";
+  x.lineJoin = "round";
+
+  // Band: thick dark arc with a lighter inner line.
+  const bandTop = -ry * 1.12;
+  const left = cups[0].cx;
+  const right = cups[1].cx;
+  const band = () => {
+    x.beginPath();
+    x.moveTo(left, cupY - cupH * 0.35);
+    x.bezierCurveTo(left - rx * 0.05, bandTop, right + rx * 0.05, bandTop, right, cupY - cupH * 0.35);
+  };
+  band();
+  x.strokeStyle = PHONE_DARK;
+  x.lineWidth = R * 0.14;
+  x.stroke();
+  band();
+  x.strokeStyle = PHONE_SHELL;
+  x.lineWidth = R * 0.07;
+  x.stroke();
+
+  for (const c of cups) {
+    if (c.k < 0.05) continue;
+    const w = cupW * (0.55 + 0.45 * c.k);
+    const hgt = cupH * (0.75 + 0.25 * c.k);
+    x.save();
+    x.translate(c.cx, cupY);
+    x.globalAlpha = 0.35 + 0.65 * c.k;
+    // Shell
+    x.beginPath();
+    x.roundRect(-w / 2, -hgt / 2, w, hgt, w * 0.48);
+    x.fillStyle = PHONE_SHELL;
+    x.fill();
+    x.strokeStyle = PHONE_DARK;
+    x.lineWidth = R * 0.05;
+    x.stroke();
+    // Accent stripe on the outer face
+    x.beginPath();
+    x.roundRect(c.sd * w * 0.06 - w * 0.17, -hgt * 0.3, w * 0.34, hgt * 0.6, w * 0.17);
+    x.fillStyle = PHONE_ACCENT;
+    x.globalAlpha *= 0.75 + pulse * 0.25;
+    x.fill();
+    // Glint
+    x.beginPath();
+    x.moveTo(-c.sd * w * 0.22, -hgt * 0.32);
+    x.lineTo(-c.sd * w * 0.22, -hgt * 0.12);
+    x.strokeStyle = "rgba(255,255,255,0.35)";
+    x.lineWidth = R * 0.035;
+    x.stroke();
+    x.restore();
+  }
+  x.restore();
+}
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
 function drawFace(
   x: CanvasRenderingContext2D,

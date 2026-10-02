@@ -43,6 +43,11 @@ export const ICONS = {
   star: "M12 3.2l2.6 5.55 5.9.82-4.3 4.3 1.05 6.13L12 17.1l-5.25 2.9L7.8 13.87 3.5 9.57l5.9-.82L12 3.2z",
   // square.stack.fill
   stack: "M5 8h14v11.5H5V8zm1.8-3h10.4v1.6H6.8V5zm1.6-2.6h7.2V4H8.4V2.4z",
+  // play.fill / pause.fill / backward.end.fill / forward.end.fill
+  play: "M7.5 4.8v14.4L19.2 12 7.5 4.8z",
+  pause: "M6.8 4.8h3.6v14.4H6.8V4.8zm6.8 0h3.6v14.4h-3.6V4.8z",
+  backward: "M5.2 5h2.2v14H5.2V5zm2.9 7L18.8 5v14L8.1 12z",
+  forward: "M16.6 5h2.2v14h-2.2V5zm-.7 7L5.2 19V5l10.7 7z",
   // doc.text
   doc: "M6.5 2.6h7l4 4v14.8h-11V2.6zm6.6 1.6v3.3h3.3l-3.3-3.3zM8.6 11h6.8v1.5H8.6V11zm0 3.4h6.8v1.5H8.6v-1.5z",
 } as const;

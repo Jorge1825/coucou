@@ -16,6 +16,14 @@ class SoundEngine {
   enabled = true;
   volume = 0.12;
 
+  /**
+   * One island per display, and every one of them hears the same events. Only
+   * the lead (main display) island plays sounds on its own; the others only
+   * while the user is actually using them.
+   */
+  private lead = true;
+  private lastTouch = -Infinity;
+
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private buffers = new Map<string, AudioBuffer>();
@@ -84,8 +92,18 @@ class SoundEngine {
     this.enabled = on;
   }
 
+  setLead(on: boolean) {
+    this.lead = on;
+  }
+
+  /** The user is on this island right now: its sounds are wanted. */
+  touch() {
+    this.lastTouch = performance.now();
+  }
+
   play(name: SoundName | string) {
     if (!this.enabled) return;
+    if (!this.lead && performance.now() - this.lastTouch > TOUCH_MS) return;
     const ctx = this.ctx;
     const master = this.master;
     const buf = this.buffers.get(name);
@@ -101,5 +119,8 @@ class SoundEngine {
     src.start();
   }
 }
+
+/** How long after the last pointer move a non-lead island may still make sound. */
+const TOUCH_MS = 4000;
 
 export const Sound = new SoundEngine();

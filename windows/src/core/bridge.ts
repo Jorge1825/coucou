@@ -3,8 +3,8 @@
 // `npm run dev` alone.
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Settings } from "./state";
 
 export const IS_TAURI =
@@ -44,6 +44,8 @@ export interface BootInfo {
   hookPath: string;
   /** -1 / 1 when docked to the left / right screen edge, 0 when free. */
   dock: number;
+  /** The main display's island: the one that plays event sounds. */
+  lead: boolean;
 }
 
 export const Bridge = {
@@ -129,6 +131,10 @@ export const Bridge = {
   /** Opens the configured n8n instance in the browser. */
   openN8n: () => call<void>("open_n8n"),
 
+  /** Spotify play_pause / next / previous — only from a click. */
+  spotifyControl: (action: "play_pause" | "next" | "previous") =>
+    call<void>("spotify_control", { action }),
+
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
 };
@@ -191,7 +197,12 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   });
 }
 
+/**
+ * Events for this window only, plus the ones sent to everybody. There is one
+ * island per display, and the global `listen` would also hand us the cursor,
+ * dock and shake events meant for the other displays' islands.
+ */
 export async function onEvent<T>(name: string, handler: (payload: T) => void) {
   if (!IS_TAURI) return () => {};
-  return listen<T>(name, (e) => handler(e.payload));
+  return getCurrentWebviewWindow().listen<T>(name, (e) => handler(e.payload));
 }

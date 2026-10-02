@@ -8,6 +8,7 @@ import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
+import { registerSpotifyHandlers } from "./island/spotify";
 
 /** The island's API badge tells the truth about the active provider's key. */
 async function refreshApiKey() {
@@ -38,7 +39,11 @@ async function main() {
   const boot = await Bridge.boot();
   if (boot) {
     State.settings = { ...State.settings, ...boot.settings };
+    Sound.setLead(boot.lead);
   }
+  // Pointer events only reach a window while the cursor is over its island.
+  document.addEventListener("pointermove", () => Sound.touch(), { passive: true });
+  document.addEventListener("pointerdown", () => Sound.touch(), { passive: true });
   island.applySettings();
   State.loadIntegrationTasks();
   void refreshApiKey();
@@ -102,6 +107,7 @@ async function main() {
 
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
+  registerSpotifyHandlers(island);
 
   island.launch();
 

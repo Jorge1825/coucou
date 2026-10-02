@@ -3,7 +3,7 @@
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
 
-export type AgentSource = "claudeCode" | "n8n" | "agent";
+export type AgentSource = "claudeCode" | "n8n" | "agent" | "spotify";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {
@@ -88,6 +88,8 @@ export interface Settings {
   absenceInterval: number;
   activeIntegrations: string[];
   screen: "primary" | "cursor";
+  /** One Mochi on every display (each placed independently). */
+  allScreens: boolean;
   autostart: boolean;
   hooksInstalled: boolean;
   /** Model used by the chat. */
@@ -105,7 +107,38 @@ export interface Settings {
   proactive: boolean;
   /** Minutes between check-ins. */
   proactiveMinutes: number;
+  /** Show what Spotify plays (headphones, card and controls). */
+  spotify: boolean;
+  /** Island background opacity, 0…1. */
+  islandOpacity: number;
+  /** Card opacity inside the island, 0…1. */
+  cardOpacity: number;
+  /** Whole-island opacity while the mouse is not on it, 0…1. */
+  idleOpacity: number;
 }
+
+/** Keeps a stored opacity inside what still leaves the island usable. */
+export function clampOpacity(v: unknown, min: number): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? v : 1;
+  return Math.max(min, Math.min(1, n));
+}
+
+export const OPACITY_MIN = { island: 0.2, card: 0, idle: 0.2 } as const;
+
+/** What Spotify is playing — see src-tauri/src/spotify.rs. */
+export interface NowPlaying {
+  active: boolean;
+  playing: boolean;
+  title: string;
+  artist: string;
+  album: string;
+  positionMs: number;
+  durationMs: number;
+  art: string | null;
+}
+
+export const SPOTIFY_ID = "integration_spotify";
+export const SPOTIFY_COLOR = "#1DB954";
 
 export const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
@@ -116,6 +149,7 @@ export const DEFAULT_SETTINGS: Settings = {
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   ],
   screen: "primary",
+  allScreens: true,
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
@@ -126,6 +160,10 @@ export const DEFAULT_SETTINGS: Settings = {
   mochiFace: "none",
   proactive: false,
   proactiveMinutes: 30,
+  spotify: true,
+  islandOpacity: 1,
+  cardOpacity: 1,
+  idleOpacity: 1,
 };
 
 type Listener = () => void;
@@ -161,6 +199,15 @@ class AppState {
   pendingApproval: ApprovalInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
+
+  /** Last Spotify reading, and when it arrived (performance.now()). */
+  spotify: NowPlaying | null = null;
+  spotifyAt = 0;
+
+  /** True while a Spotify track is actually playing (and the feature is on). */
+  get musicPlaying(): boolean {
+    return this.settings.spotify && !!this.spotify?.active && this.spotify.playing;
+  }
 
   /** Whether the active AI provider's key exists (true for local servers). */
   apiKeyPresent = false;

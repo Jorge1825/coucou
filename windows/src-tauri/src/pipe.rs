@@ -23,12 +23,11 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 
-use crate::island::WINDOW_LABEL;
 use crate::log;
 
 /// Slightly under coucou-hook's own 110 s wait, so we always answer first.
@@ -127,22 +126,24 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
 
     if event != "PermissionRequest" {
         log::line(format!("hook {event}"));
-        let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+        crate::island::emit_all(&app, "hook", payload);
         let _ = pipe.disconnect();
         return;
     }
 
     let id = format!("{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
-    let (tx, mut rx) = mpsc::channel::<Reply>(4);
+    // Every island answers (one ack each, maybe a decline each): room for all.
+    let (tx, mut rx) = mpsc::channel::<Reply>(32);
     {
         let pending = app.state::<Pending>();
         pending.0.lock().unwrap().insert(id.clone(), tx);
     }
     payload["request_id"] = json!(id);
     log::line(format!("hook PermissionRequest id={id}"));
-    let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+    crate::island::emit_all(&app, "hook", payload);
 
-    let decision = wait_for_decision(&id, &mut rx).await;
+    let islands = crate::island::all().len().max(1);
+    let decision = wait_for_decision(&id, &mut rx, islands).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
 
     // No decision: say nothing at all. coucou-hook then writes nothing to stdout
@@ -155,37 +156,53 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
 }
 
 /// Two waits: a short one for "the card is up", then the long one for a human.
-async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<String> {
-    match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
-        Ok(Some(Reply::Ack)) => {}
-        // A click that beats the ack is still a click.
-        Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
-            return Some(d);
-        }
-        Ok(Some(Reply::Decline)) => {
-            log::line(format!("hook id={id} not shown — terminal takes over"));
-            return None;
-        }
-        Ok(None) => return None,
-        Err(_) => {
-            log::line(format!("hook id={id} island never acknowledged — terminal takes over"));
-            return None;
+///
+/// Every display has its own island and each one answers. One ack is enough to
+/// wait for a human; the request only goes back to the terminal right away when
+/// *every* island declined it.
+async fn wait_for_decision(
+    id: &str,
+    rx: &mut mpsc::Receiver<Reply>,
+    islands: usize,
+) -> Option<String> {
+    let ack_deadline = tokio::time::Instant::now() + ACK_TIMEOUT;
+    let mut declines = 0;
+    loop {
+        match tokio::time::timeout_at(ack_deadline, rx.recv()).await {
+            Ok(Some(Reply::Ack)) => break,
+            // A click that beats the ack is still a click.
+            Ok(Some(Reply::Decision(d))) => {
+                log::line(format!("hook id={id} answered {d}"));
+                return Some(d);
+            }
+            Ok(Some(Reply::Decline)) => {
+                declines += 1;
+                if declines >= islands {
+                    log::line(format!("hook id={id} not shown — terminal takes over"));
+                    return None;
+                }
+            }
+            Ok(None) => return None,
+            Err(_) => {
+                log::line(format!("hook id={id} island never acknowledged — terminal takes over"));
+                return None;
+            }
         }
     }
 
-    match tokio::time::timeout(DECISION_TIMEOUT, rx.recv()).await {
-        Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
-            Some(d)
-        }
-        Ok(Some(Reply::Decline)) => {
-            log::line(format!("hook id={id} released without a decision"));
-            None
-        }
-        _ => {
-            log::line(format!("hook id={id} timed out — terminal takes over"));
-            None
+    let deadline = tokio::time::Instant::now() + DECISION_TIMEOUT;
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some(Reply::Decision(d))) => {
+                log::line(format!("hook id={id} answered {d}"));
+                return Some(d);
+            }
+            // The other islands' acks and declines: one card is up, keep waiting.
+            Ok(Some(_)) => continue,
+            _ => {
+                log::line(format!("hook id={id} timed out — terminal takes over"));
+                return None;
+            }
         }
     }
 }
@@ -212,7 +229,7 @@ pub fn acknowledge(app: &AppHandle, request_id: &str) {
 /// Nobody can act on this one — paused, or another card already holds the view.
 pub fn decline(app: &AppHandle, request_id: &str) {
     log::line(format!("decline id={request_id}"));
-    send(app, request_id, Reply::Decline, false);
+    send(app, request_id, Reply::Decline, true);
 }
 
 /// Called by the island's Allow / Deny buttons. Only ever a bare word: turning
@@ -224,4 +241,6 @@ pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
     };
     log::line(format!("decision id={request_id} {word}"));
     send(app, request_id, Reply::Decision(word.to_string()), false);
+    // The same card is up on every display: take it down everywhere else.
+    crate::island::emit_all(app, "approval-resolved", request_id.to_string());
 }

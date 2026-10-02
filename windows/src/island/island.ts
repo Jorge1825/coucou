@@ -10,7 +10,7 @@ import {
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { OPACITY_MIN, State, clampOpacity, type Settings } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { isFace, isHat } from "../mochi/accessories";
 import { Greeting } from "../mochi/greeting";
@@ -22,6 +22,14 @@ import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+
+/** Settings → Transparency, as CSS variables (see :root in style.css). */
+function applyTransparency(s: Settings) {
+  const root = document.documentElement.style;
+  root.setProperty("--island-alpha", String(clampOpacity(s.islandOpacity, OPACITY_MIN.island)));
+  root.setProperty("--card-alpha", String(clampOpacity(s.cardOpacity, OPACITY_MIN.card)));
+  root.setProperty("--idle-alpha", String(clampOpacity(s.idleOpacity, OPACITY_MIN.idle)));
+}
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 
@@ -133,6 +141,7 @@ export class Island {
           integration_stripe: "https://dashboard.stripe.com/payments",
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
+          integration_spotify: "https://open.spotify.com",
         };
         if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
@@ -725,6 +734,7 @@ export class Island {
       }
     }
     this.wasInIsland = inIsland;
+    this.islandEl.classList.toggle("away", !inIsland);
 
     // Bot hover → love
     const overBot = State.mode === "expanded" && State.stateOverride == null && this.isBotHit(x, y);
@@ -931,6 +941,7 @@ export class Island {
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();
+    this.engine.setMusic(State.musicPlaying);
     if (this.engine.morph > 0.3) {
       this.engine.slotHTarget = State.fileDragOver ? 0.2 : 0;
     } else {
@@ -1027,6 +1038,7 @@ export class Island {
     const { mochiHat, mochiFace } = State.settings;
     this.engine.hat = isHat(mochiHat) ? mochiHat : "none";
     this.engine.face = isFace(mochiFace) ? mochiFace : "none";
+    applyTransparency(State.settings);
     State.notify();
   }
 

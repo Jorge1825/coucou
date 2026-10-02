@@ -54,7 +54,7 @@ interface BotStateCfg {
 }
 
 interface Particle {
-  type: "heart" | "star" | "spark" | "sweat" | "z";
+  type: "heart" | "star" | "spark" | "sweat" | "z" | "note";
   x: number; y: number; vx: number; vy: number;
   age: number; life: number; rot: number; size: number;
 }
@@ -115,6 +115,11 @@ const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
   yawn: "tired", happy: "happy", annoyed: "line", remember: "happy",
 };
 
+/** Tempo Mochi sways at while music plays. */
+const MUSIC_BPM = 104;
+/** States calm enough to dance through — an alert or an error comes first. */
+const GROOVE_STATES: ReadonlySet<BotStateName> = new Set(["idle", "working", "thinking", "finished"]);
+
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
 const now = () => performance.now() / 1000;
@@ -161,6 +166,32 @@ function starPath(x: CanvasRenderingContext2D, ro: number, ri: number) {
   x.closePath();
 }
 
+/** ♪ (or ♫ when `double`), drawn around its centre. */
+function notePath(x: CanvasRenderingContext2D, s: number, double: boolean) {
+  const heads = double ? [-0.45, 0.45] : [0];
+  x.lineWidth = s * 0.16;
+  x.lineCap = "round";
+  for (const hx of heads) {
+    x.beginPath();
+    x.ellipse(hx * s - s * 0.12, s * 0.55, s * 0.3, s * 0.22, -0.4, 0, Math.PI * 2);
+    x.fill();
+    x.beginPath();
+    x.moveTo(hx * s + s * 0.14, s * 0.5);
+    x.lineTo(hx * s + s * 0.14, -s * 0.75);
+    x.stroke();
+  }
+  x.beginPath();
+  if (double) {
+    x.moveTo(-0.45 * s + s * 0.14, -s * 0.75);
+    x.lineTo(0.45 * s + s * 0.14, -s * 0.6);
+    x.lineWidth = s * 0.22;
+  } else {
+    x.moveTo(s * 0.14, -s * 0.75);
+    x.quadraticCurveTo(s * 0.6, -s * 0.45, s * 0.5, -s * 0.05);
+  }
+  x.stroke();
+}
+
 const FONT = `system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif`;
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -173,6 +204,17 @@ export class BotEngine {
   /** What Mochi wears (chosen in Settings). Mini bots never wear anything. */
   hat: HatKind = "none";
   face: FaceKind = "none";
+
+  /**
+   * Spotify is playing: Mochi puts its headphones on, sways to the beat and
+   * lets music notes out of the ear cups. Mini bots never listen.
+   */
+  music = false;
+  /** 0…1, peaks on every beat — the ear cups thump with it. */
+  musicPulse = 0;
+  private musicSince = 0;
+  private lastNote = 0;
+  private nextVibe = 0;
 
   // Animated state (BotEngine `s`)
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
@@ -466,6 +508,39 @@ export class BotEngine {
     }
   }
 
+  /** Headphones on or off. Off → Mochi stops swaying on the next frames. */
+  setMusic(on: boolean) {
+    if (on === this.music) return;
+    this.music = on;
+    if (on) {
+      this.musicSince = now();
+      this.nextVibe = 0;
+      this.anim("oy", [[-0.12, 140, Ease.out], [0, 280, Ease.back]]);
+      this.blink();
+    }
+  }
+
+  /** Music swaying only while nothing more important is going on. */
+  private get grooving(): boolean {
+    return this.music && !this.isMini && GROOVE_STATES.has(this.state);
+  }
+
+  /** One ♪ floating up and out of an ear cup, alternating sides. */
+  private emitNote() {
+    const sd = Math.random() < 0.5 ? -1 : 1;
+    this.particles.push({
+      type: "note",
+      x: sd * 0.72,
+      y: -0.15,
+      vx: sd * (0.08 + Math.random() * 0.1),
+      vy: -(0.5 + Math.random() * 0.25),
+      age: 0,
+      life: 1.4 + Math.random() * 0.4,
+      rot: Math.random(),
+      size: 0.17 + Math.random() * 0.06,
+    });
+  }
+
   emit(type: Particle["type"], count: number) {
     for (let i = 0; i < count; i++) {
       const isZ = type === "z";
@@ -499,6 +574,7 @@ export class BotEngine {
     return (
       this.tweens.size > 0 ||
       this.particles.length > 0 ||
+      this.music ||
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
       this.isMini ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
@@ -582,7 +658,17 @@ export class BotEngine {
       this.tgTilt = -0.06 + Math.sin(2 * Math.PI * 1.2 * wt) * 0.07;
     }
 
-    const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
+    let bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
+    if (this.grooving) {
+      // Fades in over half a second so putting the headphones on isn't a jolt.
+      const k = Math.min(1, (n - this.musicSince) / 0.5);
+      const beat = (n - this.musicSince) * (MUSIC_BPM / 60) * Math.PI;
+      this.musicPulse = Math.pow(Math.abs(Math.cos(beat)), 6);
+      this.tgTilt += Math.sin(beat) * 0.1 * k;
+      if (!this.cfg.bounces) bounce = -Math.abs(Math.cos(beat)) * 0.045 * k;
+    } else {
+      this.musicPulse = 0;
+    }
     const kGen = 1 - Math.pow(0.0008, dt);
     if (!this.locks.has("oy")) this.oy += (bounce - this.oy) * kGen;
 
@@ -621,6 +707,21 @@ export class BotEngine {
     if (this.eyeOverride && n > this.eyeOverrideUntil) {
       this.eyeOverride = this.permanentEye;
       if (this.permanentEye) this.eyeOverrideUntil = Number.POSITIVE_INFINITY;
+    }
+
+    if (this.grooving && !this.isMini) {
+      if (n - this.lastNote > 0.85) {
+        this.lastNote = n;
+        this.emitNote();
+      }
+      // Now and then Mochi closes its eyes and just enjoys it.
+      if (n > this.nextVibe) {
+        if (this.nextVibe > 0 && !this.eyeOverride) {
+          this.eyeOverride = "happy";
+          this.eyeOverrideUntil = n + 1.4;
+        }
+        this.nextVibe = n + 5 + Math.random() * 4;
+      }
     }
 
     if (n - this.lastAmbient > 1.3) {
@@ -715,8 +816,8 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
-    if (!this.isMini && (this.hat !== "none" || this.face !== "none")) {
-      drawAccessories(x, this.hat, this.face, this, R, rx, ry);
+    if (!this.isMini && (this.hat !== "none" || this.face !== "none" || this.music)) {
+      drawAccessories(x, this.hat, this.face, this, R, rx, ry, this.music ? this.musicPulse : null);
     }
 
     x.restore();
@@ -1151,6 +1252,12 @@ export class BotEngine {
           x.quadraticCurveTo(sz * 0.8, sz * 0.2, 0, sz * 0.6);
           x.quadraticCurveTo(-sz * 0.8, sz * 0.2, 0, -sz);
           x.fill();
+          break;
+        case "note":
+          x.rotate(Math.sin(p.age * 5 + p.rot * 6) * 0.25);
+          x.fillStyle = p.rot < 0.5 ? "#1ED760" : "#FFFFFF";
+          x.strokeStyle = x.fillStyle;
+          notePath(x, sz, p.rot < 0.3);
           break;
         case "z":
           x.fillStyle = "rgb(209,219,235)";

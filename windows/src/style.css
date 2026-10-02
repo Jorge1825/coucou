@@ -14,8 +14,13 @@
   --dim-3: #6b7079;
   --dim-4: #5f646d;
   --dim-5: #4b5563;
-  --card: #141518;
-  --card-flat: #0e0f11;
+  /* Transparency (Settings → Transparency), set from island.applySettings. */
+  --island-alpha: 1;
+  --card-alpha: 1;
+  --idle-alpha: 1;
+
+  --card: rgba(20, 21, 24, var(--card-alpha));
+  --card-flat: rgba(14, 15, 17, var(--card-alpha));
   --tab-on: #1d1f23;
   --hairline: rgba(255, 255, 255, 0.035);
   --red: #f4505e;
@@ -80,10 +85,16 @@ body {
   position: absolute;
   top: 0;
   left: 50%;
-  background: #000;
+  background: rgba(0, 0, 0, var(--island-alpha));
   border-radius: 0 0 14px 14px;
   overflow: visible;
   will-change: width, height, transform;
+  transition: opacity 0.35s ease;
+}
+
+/* The mouse is elsewhere: fade the whole island to the idle opacity. */
+#island.away {
+  opacity: var(--idle-alpha);
 }
 
 #island-clip {
@@ -1395,4 +1406,157 @@ input[type="range"]::-webkit-slider-thumb {
 
 .int-card.detail {
   padding-top: 8px;
+}
+
+/* ── Spotify card ─────────────────────────────────────────────────────────── */
+
+.sp-card .int-head > span {
+  color: #1ed760b3;
+}
+
+.sp-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 9px;
+  margin-left: 2px;
+}
+
+.sp-eq i {
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: #1ed760;
+  transform-origin: bottom;
+  animation: sp-eq 0.9s ease-in-out infinite;
+}
+
+.sp-eq i:nth-child(2) { animation-delay: -0.3s; animation-duration: 0.7s; }
+.sp-eq i:nth-child(3) { animation-delay: -0.6s; animation-duration: 1.1s; }
+
+@keyframes sp-eq {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+
+.sp-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  min-width: 0;
+}
+
+.sp-art {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #1db95424;
+}
+
+.sp-art.empty {
+  display: grid;
+  place-items: center;
+  color: #1ed760;
+}
+
+.sp-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sp-info b,
+.sp-info span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sp-info b {
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
+.sp-info span {
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.sp-info {
+  flex: 1 1 auto;
+}
+
+.sp-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sp-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+.sp-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #c5c8cd;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+
+.sp-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.sp-btn:active {
+  transform: scale(0.9);
+}
+
+.sp-btn.main {
+  width: 24px;
+  height: 24px;
+  background: #1ed760;
+  color: #0e0f11;
+}
+
+.sp-btn.main:hover {
+  background: #3be477;
+  color: #0e0f11;
+}
+
+.sp-bar {
+  flex: 1 1 auto;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.sp-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #1ed760;
+  border-radius: 2px;
+}
+
+.sp-time {
+  flex: 0 0 auto;
+  font: 400 10px var(--mono);
+  color: var(--dim-3);
+  font-variant-numeric: tabular-nums;
 }

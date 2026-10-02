@@ -138,6 +138,23 @@ function clearSession() {
 
 export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  // The same card is up on every display; the first click anywhere settles it.
+  void onEvent<string>("approval-resolved", (id) => clearApproval(island, id));
+}
+
+function clearApproval(island: Island, requestId: string) {
+  if (State.pendingApproval?.requestId !== requestId) return;
+  if (pendingTimeout != null) {
+    window.clearTimeout(pendingTimeout);
+    pendingTimeout = null;
+  }
+  State.pendingApproval = null;
+  State.isPinned = false;
+  island.dropPin();
+  State.updateTask(CLAUDE_ID, "working");
+  State.setPillBadge(CLAUDE_ID, null);
+  if (State.view === "approval") island.setView(State.defaultView());
+  State.notify();
 }
 
 function handleHook(island: Island, payload: HookPayload) {

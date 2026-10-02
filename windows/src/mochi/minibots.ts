@@ -9,6 +9,7 @@ interface MiniBot {
   engine: BotEngine;
   cssSize: number;
   taskId: string;
+  emote: AgentTask["emote"];
 }
 
 const live = new Map<HTMLCanvasElement, MiniBot>();
@@ -48,7 +49,7 @@ export function createMiniBot(task: AgentTask, bodySize: number): HTMLElement {
     engine.eyeOverrideUntil = Number.POSITIVE_INFINITY;
   }
 
-  live.set(canvas, { canvas, engine, cssSize: engineSize, taskId: task.id });
+  live.set(canvas, { canvas, engine, cssSize: engineSize, taskId: task.id, emote: task.emote ?? null });
   return slot;
 }
 
@@ -69,6 +70,12 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
     if (!task) continue;
     mb.engine.setState(task.state);
     mb.engine.bodyColor = hexToRGB(task.color);
+    // Emotes can change on a live pill (Spotify playing ⇄ paused).
+    const emote = task.emote ?? null;
+    if (emote !== mb.emote) {
+      mb.emote = emote;
+      mb.engine.setPermanentEmote(emote);
+    }
   }
 }
 

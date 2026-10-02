@@ -13,7 +13,11 @@ pub struct Settings {
     pub absence_interval: f64,
     pub active_integrations: Vec<String>,
     /// "primary" = the main display, "cursor" = whichever display the mouse is on.
+    /// Only used when `all_screens` is off.
     pub screen: String,
+    /// One Mochi on every display, each placed independently. On by default.
+    #[serde(default = "default_true")]
+    pub all_screens: bool,
     pub autostart: bool,
     pub hooks_installed: bool,
     /// Model used by the chat. Changeable in the settings window.
@@ -42,6 +46,26 @@ pub struct Settings {
     /// Minutes between check-ins when `proactive` is on.
     #[serde(default = "default_proactive_minutes")]
     pub proactive_minutes: u32,
+    /// Show what Spotify is playing and its controls. Read locally through
+    /// Windows' media sessions — no account, no network.
+    #[serde(default = "default_true")]
+    pub spotify: bool,
+    /// Transparency, 0…1 (1 = opaque): the island's black background, the
+    /// cards inside it, and the whole island while the mouse is elsewhere.
+    #[serde(default = "default_one")]
+    pub island_opacity: f64,
+    #[serde(default = "default_one")]
+    pub card_opacity: f64,
+    #[serde(default = "default_one")]
+    pub idle_opacity: f64,
+}
+
+fn default_one() -> f64 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_proactive_minutes() -> u32 {
@@ -78,6 +102,7 @@ impl Default for Settings {
                 "integration_github".into(),
             ],
             screen: "primary".into(),
+            all_screens: true,
             autostart: false,
             hooks_installed: false,
             model: default_model(),
@@ -88,6 +113,10 @@ impl Default for Settings {
             mochi_face: default_none(),
             proactive: false,
             proactive_minutes: default_proactive_minutes(),
+            spotify: true,
+            island_opacity: 1.0,
+            card_opacity: 1.0,
+            idle_opacity: 1.0,
         }
     }
 }

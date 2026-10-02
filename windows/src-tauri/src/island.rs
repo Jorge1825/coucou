@@ -1,16 +1,22 @@
-// Island window: placement on the chosen display, the two window sizes
-// (full panel / invisible wake strip), click-through and the cursor poll.
+// Island windows: one per display, each placed on its own screen with its own
+// position, dock side, window size (full panel / invisible wake strip),
+// click-through and cursor poll.
 //
-// There is no notch on a PC, so the island is a black shape drawn at the top
-// centre of the main display inside a borderless, transparent, always-on-top
-// window that never takes focus.
+// There is no notch on a PC, so an island is a black shape drawn at the top
+// centre of a display inside a borderless, transparent, always-on-top window
+// that never takes focus. Every display gets its own Mochi, and each one
+// remembers where the user put it on that display, independently of the others.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, EventTarget, Manager, Monitor, PhysicalPosition, PhysicalSize,
+    WebviewWindow,
+};
 
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::core::BOOL;
@@ -33,50 +39,220 @@ pub const STRIP_H: f64 = 6.0;
 /// Logical width of the expanded island drawn inside the panel window.
 const EXPANDED_W: f64 = 640.0;
 
+/// The first island (main display). The others are `island-1`, `island-2`, …
 pub const WINDOW_LABEL: &str = "island";
+/// Beyond this many displays the extra ones go without a Mochi.
+pub const MAX_ISLANDS: usize = 8;
+
+pub fn label_for(index: usize) -> String {
+    if index == 0 {
+        WINDOW_LABEL.to_string()
+    } else {
+        format!("{WINDOW_LABEL}-{index}")
+    }
+}
+
+fn is_island_label(label: &str) -> bool {
+    label == WINDOW_LABEL || label.starts_with("island-")
+}
+
+// ── The islands ──────────────────────────────────────────────────────────────
+
+/// Everything one island window owns.
+pub struct IslandWin {
+    pub label: String,
+    pub gate: Arc<PollGate>,
+    /// Key of the display this island lives on (`None` = no display: hidden).
+    monitor: Mutex<Option<String>>,
+    dragging: AtomicBool,
+    /// -1 = docked to the left edge, 1 = right edge, 0 = free.
+    dock: AtomicI32,
+    /// WebView zoom correction, see `fit_zoom` in lib.rs.
+    pub zoom: Mutex<f64>,
+}
+
+static ISLANDS: Mutex<Vec<Arc<IslandWin>>> = Mutex::new(Vec::new());
+
+/// Registers an island window that already exists. Called once per window at launch.
+pub fn register(label: &str) -> Arc<IslandWin> {
+    let iw = Arc::new(IslandWin {
+        label: label.to_string(),
+        gate: Arc::new(PollGate::new()),
+        monitor: Mutex::new(None),
+        dragging: AtomicBool::new(false),
+        dock: AtomicI32::new(0),
+        zoom: Mutex::new(1.0),
+    });
+    ISLANDS.lock().unwrap().push(iw.clone());
+    iw
+}
+
+pub fn get(label: &str) -> Option<Arc<IslandWin>> {
+    ISLANDS.lock().unwrap().iter().find(|i| i.label == label).cloned()
+}
+
+pub fn all() -> Vec<Arc<IslandWin>> {
+    ISLANDS.lock().unwrap().clone()
+}
+
+pub fn window_of(app: &AppHandle, iw: &IslandWin) -> Option<WebviewWindow> {
+    app.get_webview_window(&iw.label)
+}
+
+/// Sends an event to every island (hooks, integrations, nudges, …): each
+/// display's Mochi knows the same things.
+pub fn emit_all<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let _ = app.emit_filter(event, payload, |t| match t {
+        EventTarget::WebviewWindow { label }
+        | EventTarget::Webview { label }
+        | EventTarget::Window { label } => is_island_label(label),
+        _ => false,
+    });
+}
+
+/// Sends an event to the island on the display under the cursor (tray "Open",
+/// a second launch): only the Mochi the user is looking at should answer.
+pub fn emit_focused<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let islands = all();
+    let under_cursor = cursor_physical().and_then(|(cx, cy)| {
+        islands
+            .iter()
+            .find(|iw| monitor_of(app, iw).is_some_and(|m| monitor_contains(&m, cx, cy)))
+    });
+    let target = under_cursor
+        .or_else(|| islands.iter().find(|iw| monitor_of(app, iw).is_some()))
+        .map(|iw| iw.label.clone())
+        .unwrap_or_else(|| WINDOW_LABEL.to_string());
+    let _ = app.emit_to(target.as_str(), event, payload);
+}
+
+pub fn dock(iw: &IslandWin) -> i32 {
+    iw.dock.load(Ordering::SeqCst)
+}
+
+// ── Displays ─────────────────────────────────────────────────────────────────
+
+/// Stable name of a display (`\\.\DISPLAY2`), so a saved position survives the
+/// displays being reordered.
+fn monitor_key(m: &Monitor) -> String {
+    m.name()
+        .cloned()
+        .unwrap_or_else(|| format!("{},{}", m.position().x, m.position().y))
+}
+
+/// The main display first, then the others left to right, top to bottom.
+pub fn ordered_monitors(app: &AppHandle) -> Vec<Monitor> {
+    let mut monitors = app.available_monitors().unwrap_or_default();
+    let primary = app.primary_monitor().ok().flatten().map(|m| monitor_key(&m));
+    monitors.sort_by_key(|m| {
+        let p = m.position();
+        (Some(monitor_key(m)) != primary, p.x, p.y)
+    });
+    monitors
+}
+
+/// (one island per display?, which display otherwise)
+fn screen_prefs(app: &AppHandle) -> (bool, String) {
+    app.try_state::<crate::Shared>()
+        .map(|s| {
+            let s = s.settings.lock().unwrap();
+            (s.all_screens, s.screen.clone())
+        })
+        .unwrap_or((true, "primary".into()))
+}
+
+/// The display an island lives on right now, or `None` when it has none
+/// (fewer displays than islands, or the extra islands in single-display mode).
+pub fn monitor_of(app: &AppHandle, iw: &IslandWin) -> Option<Monitor> {
+    let (all_screens, pref) = screen_prefs(app);
+    if !all_screens {
+        return if iw.label == WINDOW_LABEL { target_monitor(app, &pref) } else { None };
+    }
+    let key = iw.monitor.lock().unwrap().clone()?;
+    app.available_monitors().ok()?.into_iter().find(|m| monitor_key(m) == key)
+}
+
+/// Hands each island its display, places the ones that have one and hides the
+/// rest. Run at launch, when settings change and when displays come and go.
+pub fn assign_monitors(app: &AppHandle) {
+    let monitors = ordered_monitors(app);
+    let islands = all();
+    if monitors.len() > islands.len() {
+        crate::log::line(format!(
+            "{} displays but {} islands — restart Coucou to cover the new ones",
+            monitors.len(),
+            islands.len()
+        ));
+    }
+    for (i, iw) in islands.iter().enumerate() {
+        *iw.monitor.lock().unwrap() = monitors.get(i).map(monitor_key);
+        let Some(win) = window_of(app, iw) else { continue };
+        let collapsed = iw.gate.collapsed.load(Ordering::Relaxed);
+        if monitor_of(app, iw).is_some() {
+            apply_geometry(app, iw, collapsed);
+            if !win.is_visible().unwrap_or(false) {
+                let _ = win.show();
+            }
+            iw.gate.forget_ignore_state();
+            iw.gate.set_active(!collapsed);
+        } else {
+            iw.gate.set_active(false);
+            let _ = win.hide();
+        }
+    }
+}
 
 // ── User placement ───────────────────────────────────────────────────────────
 
-/// Offset (logical px) of the island from its default top-centre spot.
-static OFFSET: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
-static DRAGGING: AtomicBool = AtomicBool::new(false);
-/// -1 = docked to the left edge, 1 = right edge, 0 = free.
-static DOCK: AtomicI32 = AtomicI32::new(0);
+/// Offset (logical px) of each display's island from its default top-centre
+/// spot, keyed by display.
+static POSITIONS: LazyLock<Mutex<HashMap<String, (f64, f64)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub fn dock() -> i32 {
-    DOCK.load(Ordering::SeqCst)
+fn offset(key: &str) -> (f64, f64) {
+    POSITIONS.lock().unwrap().get(key).copied().unwrap_or((0.0, 0.0))
+}
+
+fn set_offset(key: &str, value: (f64, f64)) {
+    POSITIONS.lock().unwrap().insert(key.to_string(), value);
 }
 
 fn position_path() -> std::path::PathBuf {
     crate::settings::config_dir().join("position.json")
 }
 
-pub fn load_position() {
-    if let Ok(bytes) = std::fs::read(position_path()) {
-        if let Ok((x, y)) = serde_json::from_slice::<(f64, f64)>(&bytes) {
-            *OFFSET.lock().unwrap() = (x, y);
+/// Reads the saved positions. A file from the single-island days holds one
+/// `[x, y]`; it becomes the main display's position.
+pub fn load_positions(app: &AppHandle) {
+    let Ok(bytes) = std::fs::read(position_path()) else { return };
+    if let Ok(map) = serde_json::from_slice::<HashMap<String, (f64, f64)>>(&bytes) {
+        *POSITIONS.lock().unwrap() = map;
+    } else if let Ok(xy) = serde_json::from_slice::<(f64, f64)>(&bytes) {
+        if let Some(m) = ordered_monitors(app).first() {
+            set_offset(&monitor_key(m), xy);
         }
     }
 }
 
-fn save_position() {
+fn save_positions() {
     let _ = std::fs::create_dir_all(crate::settings::config_dir());
-    if let Ok(json) = serde_json::to_vec(&*OFFSET.lock().unwrap()) {
+    if let Ok(json) = serde_json::to_vec(&*POSITIONS.lock().unwrap()) {
         let _ = std::fs::write(position_path(), json);
     }
 }
 
 /// The island is about to retract: it never floats mid-screen, so it docks to the
 /// nearest of the left, right and top edges of its display.
-pub fn dock_nearest(app: &AppHandle, pref: &str, collapsed: bool) {
-    if DRAGGING.load(Ordering::SeqCst) {
+pub fn dock_nearest(app: &AppHandle, iw: &IslandWin, collapsed: bool) {
+    if iw.dragging.load(Ordering::SeqCst) {
         return;
     }
-    let Some(m) = target_monitor(app, pref) else { return };
+    let Some(m) = monitor_of(app, iw) else { return };
+    let key = monitor_key(&m);
     let scale = m.scale_factor();
     let ms = m.size();
 
-    let (odx, ody) = *OFFSET.lock().unwrap();
+    let (odx, ody) = offset(&key);
     let half = EXPANDED_W / 2.0 * scale;
     let mid = ms.width as f64 / 2.0;
     // Centre of the island, and its top, relative to this display.
@@ -95,16 +271,18 @@ pub fn dock_nearest(app: &AppHandle, pref: &str, collapsed: bool) {
     if (dx, dy) == (odx, ody) {
         return;
     }
-    *OFFSET.lock().unwrap() = (dx, dy);
-    apply_geometry(app, pref, collapsed);
-    save_position();
+    set_offset(&key, (dx, dy));
+    apply_geometry(app, iw, collapsed);
+    save_positions();
 }
 
-/// Puts the island back at the top centre of the display.
-pub fn reset_position(app: &AppHandle, pref: &str, collapsed: bool) {
-    *OFFSET.lock().unwrap() = (0.0, 0.0);
-    save_position();
-    apply_geometry(app, pref, collapsed);
+/// Puts the island back at the top centre of its display.
+pub fn reset_position(app: &AppHandle, iw: &IslandWin, collapsed: bool) {
+    if let Some(m) = monitor_of(app, iw) {
+        set_offset(&monitor_key(&m), (0.0, 0.0));
+        save_positions();
+    }
+    apply_geometry(app, iw, collapsed);
 }
 
 // ── Shaking the island ───────────────────────────────────────────────────────
@@ -181,14 +359,14 @@ impl ShakeDetector {
 }
 
 /// Hands the move to Windows (smooth, native), then, once the button is released,
-/// remembers where the island ended up and snaps it back inside the display.
-pub fn begin_drag(app: &AppHandle, pref: String, gate: Arc<PollGate>) {
-    let Some(win) = window(app) else { return };
-    if DRAGGING.swap(true, Ordering::SeqCst) {
+/// remembers where the island ended up and snaps it back inside its display.
+pub fn begin_drag(app: &AppHandle, iw: Arc<IslandWin>) {
+    let Some(win) = window_of(app, &iw) else { return };
+    if iw.dragging.swap(true, Ordering::SeqCst) {
         return;
     }
     if win.start_dragging().is_err() {
-        DRAGGING.store(false, Ordering::SeqCst);
+        iw.dragging.store(false, Ordering::SeqCst);
         return;
     }
     let app = app.clone();
@@ -203,34 +381,35 @@ pub fn begin_drag(app: &AppHandle, pref: String, gate: Arc<PollGate>) {
             if shaken {
                 continue;
             }
-            if let (Some(win), Some(m)) = (window(&app), target_monitor(&app, &pref)) {
+            if let (Some(win), Some(m)) = (window_of(&app, &iw), monitor_of(&app, &iw)) {
                 if let Ok(pos) = win.outer_position() {
                     let swing = SHAKE_SWING * m.scale_factor();
                     let t = started.elapsed().as_millis() as u64;
                     if shake.feed(pos.x as f64, pos.y as f64, t, swing) {
                         shaken = true;
-                        let _ = app.emit_to(WINDOW_LABEL, "shaken", ());
+                        let _ = app.emit_to(iw.label.as_str(), "shaken", ());
                     }
                 }
             }
         }
         std::thread::sleep(Duration::from_millis(100));
-        if let (Some(win), Some(m)) = (window(&app), target_monitor(&app, &pref)) {
+        if let (Some(win), Some(m)) = (window_of(&app, &iw), monitor_of(&app, &iw)) {
             if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
                 let scale = m.scale_factor();
                 let mp = m.position();
                 let ms = m.size();
-                // Open, the island stays wherever the user drops it. It only docks
-                // to an edge when it is about to retract (see `dock_nearest`).
+                // Open, the island stays wherever the user drops it on its own
+                // display. It only docks to an edge when it is about to retract
+                // (see `dock_nearest`).
                 let cx = pos.x as f64 + size.width as f64 / 2.0;
                 let dx = (cx - (mp.x as f64 + ms.width as f64 / 2.0)) / scale;
                 let dy = (pos.y - mp.y) as f64 / scale;
-                *OFFSET.lock().unwrap() = (dx, dy);
+                set_offset(&monitor_key(&m), (dx, dy));
             }
         }
-        DRAGGING.store(false, Ordering::SeqCst);
-        apply_geometry(&app, &pref, gate.collapsed.load(Ordering::Relaxed));
-        save_position();
+        iw.dragging.store(false, Ordering::SeqCst);
+        apply_geometry(&app, &iw, iw.gate.collapsed.load(Ordering::Relaxed));
+        save_positions();
     });
 }
 
@@ -312,10 +491,6 @@ impl PollGate {
     }
 }
 
-pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
-    app.get_webview_window(WINDOW_LABEL)
-}
-
 fn cursor_physical() -> Option<(f64, f64)> {
     let mut p = POINT::default();
     unsafe { GetCursorPos(&mut p).ok()? };
@@ -334,8 +509,9 @@ fn cursor_physical() -> Option<(f64, f64)> {
 ///
 /// Cheap and idempotent, so it is simply re-run whenever a drag might be starting.
 pub fn unblock_webview_drops(app: &AppHandle) {
-    for label in [WINDOW_LABEL, "settings"] {
-        let Some(win) = app.get_webview_window(label) else { continue };
+    let labels = all().into_iter().map(|iw| iw.label.clone()).chain(["settings".to_string()]);
+    for label in labels {
+        let Some(win) = app.get_webview_window(&label) else { continue };
         let Some(hwnd) = hwnd_of(&win) else { continue };
         unsafe {
             let _ = EnumChildWindows(Some(hwnd), Some(revoke_render_widget), LPARAM(0));
@@ -418,7 +594,7 @@ fn monitor_contains(m: &Monitor, x: f64, y: f64) -> bool {
         && y < (p.y + s.height as i32) as f64
 }
 
-/// The display the island lives on: the primary one, or the one under the cursor.
+/// Single-display mode: the primary display, or the one under the cursor.
 fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
     let monitors = app.available_monitors().ok()?;
     if pref == "cursor" {
@@ -435,14 +611,14 @@ fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
 }
 
 /// Position and size, in physical pixels, of the display the island lives on.
-pub fn target_rect(app: &AppHandle, pref: &str) -> Option<(i32, i32, i32, i32)> {
-    let m = target_monitor(app, pref)?;
+pub fn target_rect(app: &AppHandle, iw: &IslandWin) -> Option<(i32, i32, i32, i32)> {
+    let m = monitor_of(app, iw)?;
     let (p, s) = (m.position(), m.size());
     Some((p.x, p.y, s.width as i32, s.height as i32))
 }
 
-pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
-    match target_monitor(app, pref) {
+pub fn screen_info(app: &AppHandle, iw: &IslandWin) -> ScreenInfo {
+    match monitor_of(app, iw) {
         Some(m) => {
             let scale = m.scale_factor();
             let p = m.position();
@@ -459,19 +635,23 @@ pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
     }
 }
 
-/// Places and sizes the window. `collapsed` picks the wake strip instead of the panel.
-pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
-    let Some(win) = window(app) else { return };
-    let Some(m) = target_monitor(app, pref) else { return };
+/// Places and sizes one island window. `collapsed` picks the wake strip instead
+/// of the panel. An island without a display is simply hidden.
+pub fn apply_geometry(app: &AppHandle, iw: &IslandWin, collapsed: bool) {
+    let Some(win) = window_of(app, iw) else { return };
+    let Some(m) = monitor_of(app, iw) else {
+        let _ = win.hide();
+        return;
+    };
 
     let scale = m.scale_factor();
     let mp = *m.position();
     let ms = *m.size();
 
-    // Where the user left the island, as a logical offset from the default spot
-    // (top centre of the display). Clamped so the whole 640 px island stays on
-    // this display whatever its size or scale.
-    let (odx, ody) = *OFFSET.lock().unwrap();
+    // Where the user left this display's island, as a logical offset from the
+    // default spot (top centre of the display). Clamped so the whole 640 px
+    // island stays on this display whatever its size or scale.
+    let (odx, ody) = offset(&monitor_key(&m));
     let half = EXPANDED_W / 2.0 * scale;
     let mid = mp.x as f64 + ms.width as f64 / 2.0;
     let left_lim = (mp.x as f64 + half).min(mid);
@@ -488,8 +668,8 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     } else {
         0
     };
-    if DOCK.swap(side, Ordering::SeqCst) != side {
-        let _ = app.emit_to(WINDOW_LABEL, "dock", side);
+    if iw.dock.swap(side, Ordering::SeqCst) != side {
+        let _ = app.emit_to(iw.label.as_str(), "dock", side);
     }
 
     // Retracted: the wake strip lies along the screen edge it is docked to
@@ -521,8 +701,8 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     if let Ok(got) = win.inner_size() {
         if got.width != pw || got.height != ph {
             crate::log::line(format!(
-                "window size mismatch: wanted {pw}x{ph}, got {}x{} (scale {scale}, monitor {}x{})",
-                got.width, got.height, ms.width, ms.height
+                "{}: window size mismatch: wanted {pw}x{ph}, got {}x{} (scale {scale}, monitor {}x{})",
+                iw.label, got.width, got.height, ms.width, ms.height
             ));
             let _ = win.set_size(PhysicalSize::new(pw, ph));
             let _ = win.set_position(PhysicalPosition::new(x, y));
@@ -538,9 +718,10 @@ fn hwnd_of(win: &WebviewWindow) -> Option<HWND> {
     Some(HWND(raw as *mut _))
 }
 
-/// Shows the system "open file" dialog, owned by the island so it comes to the
-/// front. Blocks until the user chooses or cancels, so call it off the UI thread.
-pub fn pick_file(app: &AppHandle) -> Option<String> {
+/// Shows the system "open file" dialog, owned by the island that asked so it
+/// comes to the front. Blocks until the user chooses or cancels, so call it off
+/// the UI thread.
+pub fn pick_file(owner: Option<WebviewWindow>) -> Option<String> {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED,
@@ -549,7 +730,7 @@ pub fn pick_file(app: &AppHandle) -> Option<String> {
         FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH,
     };
 
-    let owner = window(app).as_ref().and_then(hwnd_of);
+    let owner = owner.as_ref().and_then(hwnd_of);
     unsafe {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let path = (|| -> Option<String> {
@@ -603,28 +784,33 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
     }
 }
 
-/// Position, size and scale of the monitor the island lives on. Any change here
-/// means the island has to be placed again.
-fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
-    let pref = app
-        .try_state::<crate::Shared>()
-        .map(|s| s.settings.lock().unwrap().screen.clone())
-        .unwrap_or_else(|| "primary".into());
-    let m = target_monitor(app, &pref)?;
-    let p = m.position();
-    let size = m.size();
-    Some((p.x, p.y, size.width, size.height, m.scale_factor().to_bits()))
+/// Position, size and scale of every display. Any change here means the islands
+/// have to be handed out and placed again.
+type Layout = Vec<(String, i32, i32, u32, u32, u64)>;
+
+fn layout_key(app: &AppHandle) -> Option<Layout> {
+    let monitors = app.available_monitors().ok()?;
+    let mut layout: Layout = monitors
+        .iter()
+        .map(|m| {
+            let (p, s) = (m.position(), m.size());
+            (monitor_key(m), p.x, p.y, s.width, s.height, m.scale_factor().to_bits())
+        })
+        .collect();
+    layout.sort();
+    Some(layout)
 }
 
-/// Emits `cursor` (window-logical coordinates) at ~60 Hz while the island is
-/// visible. Parked on a condvar the rest of the time.
-pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
+/// Last display layout seen by any island's poll.
+static LAYOUT: Mutex<Option<Layout>> = Mutex::new(None);
+
+/// Emits `cursor` (window-logical coordinates) to its own island at ~60 Hz while
+/// that island is visible. Parked on a condvar the rest of the time.
+pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
+    let gate = iw.gate.clone();
     std::thread::spawn(move || {
         let mut was_down = false;
         let mut was_dragging = false;
-        // Remembered across wakes so a display change while hidden is noticed the
-        // moment the island comes back.
-        let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
         loop {
             gate.wait_until_active();
             let mut last = (f64::MIN, f64::MIN);
@@ -638,18 +824,22 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // is already running, so this costs one monitor query.
                 ticks = ticks.wrapping_add(1);
                 if ticks % 30 == 0 {
-                    let now = current_screen_key(&app);
-                    if now.is_some() && now != last_screen {
-                        let first = last_screen.is_none();
-                        last_screen = now;
-                        if !first {
+                    if let Some(now) = layout_key(&app) {
+                        let changed = {
+                            let mut seen = LAYOUT.lock().unwrap();
+                            let changed = seen.as_ref().is_some_and(|s| *s != now);
+                            *seen = Some(now);
+                            changed
+                        };
+                        if changed {
                             crate::log::line("display layout changed — repositioning".to_string());
-                            let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
+                            assign_monitors(&app);
+                            emit_all(&app, "screen-changed", ());
                         }
                     }
                 }
 
-                let Some(win) = window(&app) else { continue };
+                let Some(win) = window_of(&app, &iw) else { continue };
                 let Ok(origin) = win.outer_position() else { continue };
                 let scale = win.scale_factor().unwrap_or(1.0);
                 let Some((cx, cy)) = cursor_physical() else { continue };
@@ -708,16 +898,14 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     let _ = win.set_ignore_cursor_events(!accept);
                 }
 
-                let _ = win.emit("cursor", CursorPayload { x, y });
+                let _ = app.emit_to(iw.label.as_str(), "cursor", CursorPayload { x, y });
             }
         }
     });
 }
 
-pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
-    if let Some(win) = window(app) {
-        let _ = win.set_ignore_cursor_events(ignore);
-    }
+pub fn set_ignore_cursor(win: &WebviewWindow, ignore: bool) {
+    let _ = win.set_ignore_cursor_events(ignore);
 }
 
 #[cfg(test)]

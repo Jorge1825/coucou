@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 use crate::{claude, island, memory, providers, reminders};
 
@@ -90,7 +90,7 @@ fn context(now: &str, notes: &[String], pending: &[reminders::Reminder], recent:
 
 fn deliver(app: &AppHandle, text: String, kind: &'static str) {
     crate::log::line(format!("nudge ({kind}): {} chars", text.chars().count()));
-    let _ = app.emit_to(island::WINDOW_LABEL, "nudge", Nudge { text, kind });
+    island::emit_all(app, "nudge", Nudge { text, kind });
 }
 
 pub fn start(app: AppHandle) {

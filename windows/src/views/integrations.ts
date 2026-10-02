@@ -8,6 +8,8 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
+import { SPOTIFY_COLOR, SPOTIFY_ID } from "../core/state";
+import { spotifyControl, spotifyPosition } from "../island/spotify";
 
 /** Same shape as the Swift `timeAgo` computed properties. */
 export function timeAgo(value: unknown): string {
@@ -372,6 +374,86 @@ function n8nDetail(task: AgentTask, onBack: () => void): HTMLElement {
   );
 }
 
+// ── Spotify ───────────────────────────────────────────────────────────────────
+
+/** The live progress bar of the card on screen, moved every frame by tickSpotifyCard. */
+let spotifyLive: { fill: HTMLElement; time: HTMLElement } | null = null;
+
+function mmss(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** What decides whether the Spotify card must be rebuilt (not the position). */
+export function spotifyKey(): string {
+  const np = State.spotify;
+  return np ? [np.title, np.artist, np.playing, np.durationMs, !!np.art].join("~") : "none";
+}
+
+function spotifyCard(): HTMLElement {
+  const np = State.spotify;
+  const playing = !!np?.playing;
+  const hasTrack = !!np?.title;
+
+  const art = np?.art
+    ? h("img", { class: "sp-art", src: np.art, alt: "" })
+    : h("div", { class: "sp-art empty" }, svg(ICONS.play, 12));
+
+  const info = h(
+    "div",
+    { class: "sp-info" },
+    h("b", { text: hasTrack ? np!.title : "Nothing playing" }),
+    h("span", { text: hasTrack ? np!.artist || np!.album : "Play something in Spotify" }),
+  );
+
+  const btn = (icon: string, title: string, action: "play_pause" | "next" | "previous", main = false) =>
+    h(
+      "button",
+      { class: main ? "sp-btn main" : "sp-btn", title, onclick: () => spotifyControl(action) },
+      svg(icon, main ? 11 : 9),
+    );
+
+  const fill = h("i", {});
+  const time = h("span", { class: "sp-time" });
+  const bar = h("div", { class: "sp-bar" }, fill);
+  spotifyLive = np && np.durationMs > 0 ? { fill, time } : null;
+  tickSpotifyCard();
+
+  const status = h("span", { text: playing ? "Now playing" : "Paused" });
+  const eq = playing ? h("span", { class: "sp-eq" }, h("i", {}), h("i", {}), h("i", {})) : undefined;
+  const head = h("div", { class: "int-head" }, dot(SPOTIFY_COLOR, 7), h("b", { text: "Spotify" }), status);
+  if (eq) head.append(eq);
+
+  return h(
+    "div",
+    { class: "int-card sp-card" },
+    head,
+    h(
+      "div",
+      { class: "sp-track" },
+      art,
+      info,
+      h(
+        "div",
+        { class: "sp-controls" },
+        btn(ICONS.backward, "Previous", "previous"),
+        btn(playing ? ICONS.pause : ICONS.play, playing ? "Pause" : "Play", "play_pause", true),
+        btn(ICONS.forward, "Next", "next"),
+      ),
+    ),
+    h("div", { class: "sp-progress" }, spotifyLive ? bar : h("span", { class: "sp-bar" }), time),
+  );
+}
+
+/** Moves the progress bar between readings. Cheap: two style writes a frame. */
+export function tickSpotifyCard() {
+  const np = State.spotify;
+  if (!spotifyLive || !np || np.durationMs <= 0) return;
+  const pos = spotifyPosition();
+  spotifyLive.fill.style.width = `${Math.min(100, (pos / np.durationMs) * 100)}%`;
+  spotifyLive.time.textContent = `${mmss(pos)} / ${mmss(np.durationMs)}`;
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 export interface IntegrationCardHooks {
@@ -404,6 +486,7 @@ export function hasIntegrationData(id: string): boolean {
 }
 
 export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHooks): HTMLElement {
+  if (task.id === SPOTIFY_ID) return spotifyCard();
   if (task.id === "integration_n8n") {
     const hasActivity = task.steps.length > 0 && (task.state === "finished" || task.state === "error");
     return hooks.detailOpen && hasActivity

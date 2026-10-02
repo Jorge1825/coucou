@@ -2,9 +2,8 @@
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-use crate::island::WINDOW_LABEL;
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Coucou", true, None::<&str>)?;
@@ -22,9 +21,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app: &AppHandle, event| match event.id.as_ref() {
             "quit" => app.exit(0),
             "settings" => crate::show_settings_window(app),
-            id => {
-                let _ = app.emit_to(WINDOW_LABEL, "tray", id.to_string());
-            }
+            // Pause concerns every display; Open only the one being looked at.
+            "pause" => crate::island::emit_all(app, "tray", "pause".to_string()),
+            id => crate::island::emit_focused(app, "tray", id.to_string()),
         });
 
     if let Some(icon) = app.default_window_icon().cloned() {
