@@ -58,6 +58,17 @@ pub struct Settings {
     pub card_opacity: f64,
     #[serde(default = "default_one")]
     pub idle_opacity: f64,
+    /// Global shortcut that opens the chat; empty = none.
+    #[serde(default = "default_chat_hotkey")]
+    pub chat_hotkey: String,
+    /// Seconds in the compact island before it hides completely; 0 = never.
+    /// Never by default: a fully hidden island is easy to lose.
+    #[serde(default)]
+    pub hide_after: u32,
+    /// Interface language: "auto" (follow Windows), "en", "es", "ru" or "zh".
+    /// Mochi's chat answers in it too.
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 fn default_one() -> f64 {
@@ -66,9 +77,10 @@ fn default_one() -> f64 {
 
 fn default_true() -> bool {
     true
-    /// Global shortcut that opens the chat; empty = none.
-    #[serde(default = "default_chat_hotkey")]
-    pub chat_hotkey: String,
+}
+
+fn default_language() -> String {
+    "auto".into()
 }
 
 fn default_chat_hotkey() -> String {
@@ -125,6 +137,8 @@ impl Default for Settings {
             card_opacity: 1.0,
             idle_opacity: 1.0,
             chat_hotkey: default_chat_hotkey(),
+            hide_after: 0,
+            language: default_language(),
         }
     }
 }

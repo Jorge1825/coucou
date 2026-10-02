@@ -8,6 +8,7 @@ import { Sound } from "../core/sound";
 import { moodOf } from "../mochi/mood";
 import { State, type ChatMessage } from "../core/state";
 import type { ViewHost } from "./views";
+import { t } from "../core/i18n";
 
 let nextId = 1;
 
@@ -43,13 +44,13 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const input = h("input", {
     type: "text",
     class: "chat-input",
-    placeholder: "Ask me anything…",
+    placeholder: t("Ask me anything…"),
     spellcheck: "false",
   }) as HTMLInputElement;
-  const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
+  const send = h("button", { class: "send-btn", title: t("Send") }, svg(ICONS.arrowUp, 11));
   const look = h(
     "button",
-    { class: "look-btn", title: "Let Mochi see my screen (once)" },
+    { class: "look-btn", title: t("Let Mochi see my screen (once)") },
     svg(ICONS.eye, 15, { stroke: 1.8 }),
   );
   const bar = h("div", { class: "chat-bar" }, input, look, send);
@@ -160,7 +161,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         clear(chipRow);
         if (file?.name) chipRow.append(contextChip(file.name));
         if (State.pendingScreen) {
-          const chip = contextChip("Screen — click to remove");
+          const chip = contextChip(t("Screen — click to remove"));
           chip.classList.add("removable");
           chip.addEventListener("click", () => {
             State.pendingScreen = null;
@@ -180,11 +181,11 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         log.scrollTop = log.scrollHeight;
       }
 
-      input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
+      input.placeholder = State.chatHistory.length === 0 ? t("Ask me anything…") : t("Continue…");
       // readOnly, not disabled: disabling the field drops its focus, and the user
       // would have to click it again after every message.
       input.readOnly = sending;
-      send.title = sending ? "Stop" : "Send";
+      send.title = sending ? t("Stop") : t("Send");
       send.classList.toggle("stop", sending);
       if (send.dataset.icon !== (sending ? "stop" : "send")) {
         send.dataset.icon = sending ? "stop" : "send";

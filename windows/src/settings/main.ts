@@ -10,6 +10,7 @@ import { h, clear } from "../views/dom";
 import { BotEngine } from "../mochi/engine";
 import { Sound } from "../core/sound";
 import { FACES, HATS, isFace, isHat } from "../mochi/accessories";
+import { LANGUAGES, setLanguage, t } from "../core/i18n";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -71,15 +72,15 @@ function claudeSection(status: HookStatus): HTMLElement {
       h("div", {
         class: "hint",
         text: status.installed
-          ? "Coucou is hooked into your Claude Code sessions. Tool calls, questions and permission requests show up in the island, and you can answer them there."
-          : "Install the hooks to see your Claude Code sessions in the island and approve permissions without leaving what you are doing.",
+          ? t("Coucou is hooked into your Claude Code sessions. Tool calls, questions and permission requests show up in the island, and you can answer them there.")
+          : t("Install the hooks to see your Claude Code sessions in the island and approve permissions without leaving what you are doing."),
       }),
       h("div", { class: "row" },
         h("label", { text: "settings.json" }),
         h("span", { class: "path", text: status.settingsPath }),
       ),
       h("div", { class: "row" },
-        h("label", { text: "Relay" }),
+        h("label", { text: t("Relay") }),
         h("span", { class: "path", text: status.hookPath }),
         statusDot(status.hookReady),
       ),
@@ -88,27 +89,27 @@ function claudeSection(status: HookStatus): HTMLElement {
     if (!status.hookReady) {
       body.append(h("div", {
         class: "notice warn",
-        text: "coucou-hook.exe is not in place yet. Restart Coucou; if it still fails, build it with `cargo build -p coucou-hook`.",
+        text: t("coucou-hook.exe is not in place yet. Restart Coucou; if it still fails, build it with `cargo build -p coucou-hook`."),
       }));
     }
 
     const actions = h("div", { class: "row" });
     const install = h("button", {
       class: "primary",
-      text: status.installed ? "Reinstall hooks…" : "Install hooks…",
+      text: status.installed ? t("Reinstall hooks…") : t("Install hooks…"),
       onclick: () => showPreview(true),
     });
     // Writing hook commands that point at a relay which isn't there would give
     // every Claude Code session a broken hook and nothing to show for it.
     if (!status.hookReady) {
       install.disabled = true;
-      install.title = "The relay isn't installed yet.";
+      install.title = t("The relay isn't installed yet.");
     }
     actions.append(install);
     if (status.installed) {
       actions.append(h("button", {
         class: "danger",
-        text: "Uninstall hooks…",
+        text: t("Uninstall hooks…"),
         onclick: () => showPreview(false),
       }));
     }
@@ -126,7 +127,7 @@ function claudeSection(status: HookStatus): HTMLElement {
       body.append(
         h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }),
         h("div", { class: "row" }, h("button", {
-          text: "Back",
+          text: t("Back"),
           onclick: () => { clear(body); draw(); },
         })),
       );
@@ -138,17 +139,17 @@ function claudeSection(status: HookStatus): HTMLElement {
       h("div", {
         class: "hint",
         text: install
-          ? "This is exactly what will change in your settings.json. Your own hooks are left untouched."
-          : "This removes Coucou's entries only. Your own hooks are left untouched.",
+          ? t("This is exactly what will change in your settings.json. Your own hooks are left untouched.")
+          : t("This removes Coucou's entries only. Your own hooks are left untouched."),
       }),
       renderDiff(preview.diff),
       h("div", { class: "row" },
-        h("span", { class: "path", text: `Backup → ${preview.backup}` }),
+        h("span", { class: "path", text: t("Backup → {path}", { path: preview.backup }) }),
       ),
     );
     const confirm = h("button", {
       class: install ? "primary" : "danger",
-      text: install ? "Back up and write" : "Back up and remove",
+      text: install ? t("Back up and write") : t("Back up and remove"),
     });
     confirm.addEventListener("click", async () => {
       confirm.disabled = true;
@@ -157,16 +158,16 @@ function claudeSection(status: HookStatus): HTMLElement {
         clear(body);
         body.append(h("div", {
           class: "notice ok",
-          text: `Done. Previous settings saved as ${backup}. Open a new Claude Code session to pick the hooks up.`,
+          text: t("Done. Previous settings saved as {path}. Open a new Claude Code session to pick the hooks up.", { path: backup }),
         }));
         window.setTimeout(() => void rebuild(), 2600);
       } catch (err) {
         confirm.disabled = false;
-        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+        body.append(h("div", { class: "notice err", text: t("Could not write: {error}", { error: String(err) }) }));
       }
     });
     body.append(h("div", { class: "row" }, confirm, h("button", {
-      text: "Cancel",
+      text: t("Cancel"),
       onclick: () => { clear(body); draw(); },
     })));
   }
@@ -219,7 +220,7 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
 
     const field = h("input", {
       type: "password",
-      placeholder: def.key && present[def.key] ? "••••••••••••  (stored)" : def.keyHint || "API key",
+      placeholder: def.key && present[def.key] ? t("••••••••••••  (stored)") : def.keyHint || t("API key"),
       style: "flex:1 1 auto;min-width:0",
       autocomplete: "off",
       spellcheck: "false",
@@ -227,7 +228,7 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
 
     const saveKey = h("button", {
       class: "primary",
-      text: "Save key",
+      text: t("Save key"),
       onclick: async () => {
         if (!def.key) return;
         const value = field.value.trim();
@@ -235,9 +236,9 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
         try {
           await Bridge.secretSet(def.key, value);
           present[def.key] = true;
-          notice = { ok: true, text: "Saved. It never touches disk." };
+          notice = { ok: true, text: t("Saved. It never touches disk.") };
         } catch (err) {
-          notice = { ok: false, text: `Could not save: ${String(err)}` };
+          notice = { ok: false, text: t("Could not save: {error}", { error: String(err) }) };
         }
         draw();
       },
@@ -245,15 +246,15 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
 
     const removeKey = h("button", {
       class: "danger",
-      text: "Remove",
+      text: t("Remove"),
       onclick: async () => {
         if (!def.key) return;
         try {
           await Bridge.secretClear(def.key);
           present[def.key] = false;
-          notice = { ok: true, text: "Key removed." };
+          notice = { ok: true, text: t("Key removed.") };
         } catch (err) {
-          notice = { ok: false, text: `Could not remove: ${String(err)}` };
+          notice = { ok: false, text: t("Could not remove: {error}", { error: String(err) }) };
         }
         draw();
       },
@@ -271,11 +272,11 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
         settings.model = model.value;
         void save();
       });
-      modelRow = h("div", { class: "row" }, h("label", { text: "Model" }), model);
+      modelRow = h("div", { class: "row" }, h("label", { text: t("Model") }), model);
     } else {
       const model = h("input", {
         type: "text",
-        placeholder: def.model || "model name",
+        placeholder: def.model || t("model name"),
         style: "flex:1 1 auto;min-width:0",
         spellcheck: "false",
       }) as HTMLInputElement;
@@ -284,24 +285,24 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
         settings.model = model.value.trim();
         void save();
       });
-      modelRow = h("div", { class: "row" }, h("label", { text: "Model" }), model);
+      modelRow = h("div", { class: "row" }, h("label", { text: t("Model") }), model);
     }
 
     section.append(
-      h("h2", {}, statusDot(hasKey), h("span", { text: "AI Provider" })),
+      h("h2", {}, statusDot(hasKey), h("span", { text: t("AI Provider") })),
       h("div", {
         class: "hint",
         text: def.key
           ? hasKey
-            ? `${def.name} key saved in the Windows Credential Manager.`
-            : `No ${def.name} key yet — the chat needs one.`
-          : "Runs on your local Ollama server — no API key needed.",
+            ? t("{name} key saved in the Windows Credential Manager.", { name: def.name })
+            : t("No {name} key yet — the chat needs one.", { name: def.name })
+          : t("Runs on your local Ollama server — no API key needed."),
       }),
-      h("div", { class: "row" }, h("label", { text: "Provider" }), provider),
-      h("div", { class: "row" }, h("label", { text: "Base URL" }), url),
+      h("div", { class: "row" }, h("label", { text: t("Provider") }), provider),
+      h("div", { class: "row" }, h("label", { text: t("Base URL") }), url),
       h("div", {
         class: "hint",
-        text: "Leave empty to use the provider's own URL. The chat path (/v1/messages or /v1/chat/completions) is added automatically.",
+        text: t("Leave empty to use the provider's own URL. The chat path (/v1/messages or /v1/chat/completions) is added automatically."),
       }),
     );
 
@@ -316,14 +317,14 @@ function apiSection(present: Record<string, boolean>): HTMLElement {
         settings.providerFormat = format.value;
         void save();
       });
-      section.append(h("div", { class: "row" }, h("label", { text: "API format" }), format));
+      section.append(h("div", { class: "row" }, h("label", { text: t("API format") }), format));
     }
 
     section.append(modelRow);
 
     if (def.key) {
       section.append(
-        h("div", { class: "row" }, h("label", { text: "API key" }), field, saveKey, removeKey),
+        h("div", { class: "row" }, h("label", { text: t("API key") }), field, saveKey, removeKey),
       );
     }
     if (notice) {
@@ -379,7 +380,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const search = h("input", {
     type: "search",
     class: "int-search",
-    placeholder: "Search integrations…",
+    placeholder: t("Search integrations…"),
     spellcheck: "false",
     autocomplete: "off",
   }) as HTMLInputElement;
@@ -390,7 +391,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
-    note.textContent = `Pick up to ${MAX_ACTIVE} pills to show next to Mochi — ${used}/${MAX_ACTIVE} in use. Keys are stored in the Windows Credential Manager, never on disk.`;
+    note.textContent = t("Pick up to {max} pills to show next to Mochi — {used}/{max} in use. Keys are stored in the Windows Credential Manager, never on disk.", { max: MAX_ACTIVE, used });
   }
 
   for (const def of INTEGRATIONS) {
@@ -412,7 +413,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     const status = h("span", { class: "int-status" });
     const refreshStatus = () => {
       const ready = def.fields.every((f) => present[f.key]);
-      status.textContent = ready ? "Key stored" : "Not set up";
+      status.textContent = ready ? t("Key stored") : t("Not set up");
       status.classList.toggle("ok", ready);
     };
     refreshStatus();
@@ -421,12 +422,12 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     for (const field of def.fields) {
       const input = h("input", {
         type: field.secret ? "password" : "text",
-        placeholder: present[field.key] ? "••••••••  (stored)" : field.placeholder,
+        placeholder: present[field.key] ? t("••••••••  (stored)") : field.placeholder,
         autocomplete: "off",
         spellcheck: "false",
         style: "flex:1 1 auto;min-width:0",
       }) as HTMLInputElement;
-      const saveBtn = h("button", { text: "Save" });
+      const saveBtn = h("button", { text: t("Save") });
       const dotEl = statusDot(present[field.key] ?? false);
       saveBtn.addEventListener("click", async () => {
         const value = input.value.trim();
@@ -435,7 +436,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
           present[field.key] = value.length > 0;
           refreshStatus();
           input.value = "";
-          input.placeholder = value ? "••••••••  (stored)" : field.placeholder;
+          input.placeholder = value ? t("••••••••  (stored)") : field.placeholder;
           dotEl.style.background = value ? "#22c55e" : "#f4505e";
         } catch {
           dotEl.style.background = "#f5a524";
@@ -443,7 +444,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       });
       rows.append(
         h("div", { class: "row" },
-          h("label", { style: "min-width:104px", text: field.label }),
+          h("label", { style: "min-width:104px", text: t(field.label) }),
           input, saveBtn, dotEl,
         ),
       );
@@ -477,7 +478,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   }
 
   updateNote();
-  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, search, list);
+  return h("section", {}, h("h2", {}, h("span", { text: t("Integrations") })), note, search, list);
 }
 
 // ── Transparency section ──────────────────────────────────────────────────────
@@ -530,7 +531,7 @@ function transparencySection(): HTMLElement {
   const presetButtons = TRANSPARENCY_PRESETS.map((p) => {
     const b = h("button", {
       class: "chip",
-      text: p.label,
+      text: t(p.label),
       onclick: () => {
         Object.assign(settings, p.values);
         for (const s of sliders) {
@@ -554,18 +555,18 @@ function transparencySection(): HTMLElement {
   presets.append(...presetButtons.map((x) => x.b));
 
   const rows = [
-    slider("islandOpacity", OPACITY_MIN.island, "Island background", "the black shape"),
-    slider("cardOpacity", OPACITY_MIN.card, "Cards", "panels inside the island"),
-    slider("idleOpacity", OPACITY_MIN.idle, "When away", "whole island while the mouse is elsewhere"),
+    slider("islandOpacity", OPACITY_MIN.island, t("Island background"), t("the black shape")),
+    slider("cardOpacity", OPACITY_MIN.card, t("Cards"), t("panels inside the island")),
+    slider("idleOpacity", OPACITY_MIN.idle, t("When away"), t("whole island while the mouse is elsewhere")),
   ];
   markPreset();
 
   return h(
     "section",
     {},
-    h("h2", {}, h("span", { text: "Transparency" })),
-    h("div", { class: "hint", text: "Background and cards only change the panels — text and Mochi stay sharp. “When away” fades the whole island until the mouse comes back." }),
-    h("div", { class: "row" }, h("label", { text: "Preset" }), presets),
+    h("h2", {}, h("span", { text: t("Transparency") })),
+    h("div", { class: "hint", text: t("Background and cards only change the panels — text and Mochi stay sharp. “When away” fades the whole island until the mouse comes back.") }),
+    h("div", { class: "row" }, h("label", { text: t("Preset") }), presets),
     ...rows,
   );
 }
@@ -586,11 +587,11 @@ function comboFromEvent(e: KeyboardEvent): string | null {
   return [...mods, key].join("+");
 }
 
-/** "Open chat shortcut": click, press the combination; Backspace removes it, Esc cancels. */
+/** t("Open chat shortcut"): click, press the combination; Backspace removes it, Esc cancels. */
 function shortcutRow(): HTMLElement {
   const button = h("button", { class: "shortcut" }) as HTMLButtonElement;
   const note = h("span", { class: "hint" });
-  const show = () => { button.textContent = settings.chatHotkey || "None"; };
+  const show = () => { button.textContent = settings.chatHotkey || t("None"); };
   show();
 
   let listening = false;
@@ -602,7 +603,7 @@ function shortcutRow(): HTMLElement {
   const apply = async (combo: string) => {
     try {
       settings.chatHotkey = await Bridge.setChatHotkey(combo);
-      note.textContent = combo ? "Saved." : "Shortcut removed.";
+      note.textContent = combo ? t("Saved.") : t("Shortcut removed.");
     } catch (err) {
       note.textContent = String(err).replace(/^Error:\s*/, "");
     }
@@ -619,7 +620,7 @@ function shortcutRow(): HTMLElement {
     const combo = comboFromEvent(e);
     if (!combo) return; // only modifiers so far
     if (!(e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)) {
-      note.textContent = "Hold Ctrl, Alt, Shift or Win together with the key.";
+      note.textContent = t("Hold Ctrl, Alt, Shift or Win together with the key.");
       return;
     }
     stop();
@@ -628,13 +629,13 @@ function shortcutRow(): HTMLElement {
   button.addEventListener("click", () => {
     if (listening) return stop();
     listening = true;
-    button.textContent = "Press the keys…";
-    note.textContent = "Backspace removes it, Esc cancels.";
+    button.textContent = t("Press the keys…");
+    note.textContent = t("Backspace removes it, Esc cancels.");
     window.addEventListener("keydown", onKey, true);
   });
   button.addEventListener("blur", () => { if (listening) stop(); });
 
-  return h("div", { class: "row" }, h("label", { text: "Open chat shortcut" }), button, note);
+  return h("div", { class: "row" }, h("label", { text: t("Open chat shortcut") }), button, note);
 }
 
 function generalSection(): HTMLElement {
@@ -648,21 +649,46 @@ function generalSection(): HTMLElement {
   });
 
   const autoClose = h("input", {
-    type: "number", min: "5", max: "120", step: "1",
+    type: "number", min: "1", max: "120", step: "1",
     value: String(Math.round(settings.autoCloseInterval)),
     style: "width:72px",
   }) as HTMLInputElement;
   autoClose.addEventListener("change", () => {
-    settings.autoCloseInterval = Math.max(5, Math.min(120, Number(autoClose.value) || 15));
+    settings.autoCloseInterval = Math.max(1, Math.min(120, Number(autoClose.value) || 15));
     autoClose.value = String(settings.autoCloseInterval);
+    void save();
+  });
+
+  const lang = h("select", {}) as HTMLSelectElement;
+  for (const l of LANGUAGES) {
+    lang.append(h("option", { value: l.id, text: l.id === "auto" ? t("Auto (Windows language)") : l.label }));
+  }
+  lang.value = settings.language || "auto";
+  lang.addEventListener("change", async () => {
+    settings.language = lang.value;
+    await save();
+    // The islands reload themselves on the settings event; this window too.
+    location.reload();
+  });
+
+  const hide = h("select", {}) as HTMLSelectElement;
+  for (const [secs, label] of [
+    [0, t("Never")], [60, t("After 1 minute")], [300, t("After 5 minutes")], [900, t("After 15 minutes")],
+  ] as const) {
+    hide.append(h("option", { value: String(secs), text: label }));
+  }
+  hide.value = String(settings.hideAfter ?? 0);
+  if (hide.selectedIndex < 0) hide.value = "0";
+  hide.addEventListener("change", () => {
+    settings.hideAfter = Number(hide.value) || 0;
     void save();
   });
 
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
-    h("option", { value: "all", text: "Every display" }),
-    h("option", { value: "primary", text: "Main display" }),
-    h("option", { value: "cursor", text: "Display under the cursor" }),
+    h("option", { value: "all", text: t("Every display") }),
+    h("option", { value: "primary", text: t("Main display") }),
+    h("option", { value: "cursor", text: t("Display under the cursor") }),
   );
   screen.value = settings.allScreens ? "all" : settings.screen;
   screen.addEventListener("change", () => {
@@ -674,24 +700,33 @@ function generalSection(): HTMLElement {
   return h(
     "section",
     {},
-    h("h2", {}, h("span", { text: "General" })),
+    h("h2", {}, h("span", { text: t("General") })),
     h("div", { class: "row" },
-      h("label", { text: "Sound" }),
+      h("label", { text: t("Language") }),
+      lang,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: t("Sound") }),
       toggle(settings.soundEnabled, (v) => { settings.soundEnabled = v; void save(); }),
       volume,
     ),
     h("div", { class: "row" },
-      h("label", { text: "Auto-close" }),
+      h("label", { text: t("Auto-close") }),
       autoClose,
-      h("span", { class: "hint", text: "seconds after you leave the island" }),
+      h("span", { class: "hint", text: t("seconds after you leave the island") }),
+    ),
+    h("div", { class: "row", title: t("When hidden, a small bar at the edge of the screen marks where to point to bring it back.") },
+      h("label", { text: t("Hide completely") }),
+      hide,
+      h("span", { class: "hint", text: t("when idle in the compact island") }),
     ),
     h("div", { class: "row" },
-      h("label", { text: "Island lives on" }),
+      h("label", { text: t("Island lives on") }),
       screen,
     ),
     shortcutRow(),
     h("div", { class: "row" },
-      h("label", { text: "Launch at startup" }),
+      h("label", { text: t("Launch at startup") }),
       toggle(settings.autostart, (v) => { settings.autostart = v; void save(); }),
     ),
   );
@@ -766,7 +801,7 @@ function mochiSection(): HTMLElement {
     const buttons = options.map((o) => {
       const b = h("button", {
         class: "chip",
-        text: o.label,
+        text: t(o.label),
         onclick: () => {
           set(o.id);
           applyLook();
@@ -790,26 +825,26 @@ function mochiSection(): HTMLElement {
       canvas,
       h("div", { class: "mochi-pickers" },
         h("div", { class: "row" },
-          h("label", { text: "Hat" }),
+          h("label", { text: t("Hat") }),
           picker(HATS, () => settings.mochiHat, (v) => { settings.mochiHat = v; }),
         ),
         h("div", { class: "row" },
-          h("label", { text: "Face" }),
+          h("label", { text: t("Face") }),
           picker(FACES, () => settings.mochiFace, (v) => { settings.mochiFace = v; }),
         ),
         h("div", { class: "row" },
-          h("label", { text: "Preview" }),
+          h("label", { text: t("Preview") }),
           h("div", { class: "chips" },
-            h("button", { class: "chip", text: "Reminder wave", onclick: () => { playSound("approval"); engine.attention(); } }),
-            h("button", { class: "chip", text: "Saved a note", onclick: () => { playSound("approve"); engine.triggerEmote("remember"); } }),
-            h("button", { class: "chip", text: "Greeting", onclick: () => engine.greet() }),
-            h("button", { class: "chip", text: "Listening", onclick: () => engine.setMusic(!engine.music) }),
+            h("button", { class: "chip", text: t("Reminder wave"), onclick: () => { playSound("approval"); engine.attention(); } }),
+            h("button", { class: "chip", text: t("Saved a note"), onclick: () => { playSound("approve"); engine.triggerEmote("remember"); } }),
+            h("button", { class: "chip", text: t("Greeting"), onclick: () => engine.greet() }),
+            h("button", { class: "chip", text: t("Listening"), onclick: () => engine.setMusic(!engine.music) }),
           ),
         ),
         h("div", { class: "row" },
           h("label", { text: "Spotify" }),
           toggle(settings.spotify, (v) => { settings.spotify = v; void save(); }),
-          h("span", { class: "hint", text: "Headphones, now playing and controls" }),
+          h("span", { class: "hint", text: t("Headphones, now playing and controls") }),
         ),
       ),
     ),
@@ -825,7 +860,7 @@ function memorySection(): HTMLElement {
   const input = h("input", {
     type: "text",
     class: "memory-input",
-    placeholder: "Add something for Mochi to remember…",
+    placeholder: t("Add something for Mochi to remember…"),
     spellcheck: "false",
   }) as HTMLInputElement;
 
@@ -838,7 +873,7 @@ function memorySection(): HTMLElement {
     const notes = (await Bridge.memoryList()) ?? [];
     clear(list);
     if (notes.length === 0) {
-      list.append(h("div", { class: "hint", text: "Nothing yet. Tell Mochi \"remember that…\", or let it pick up what matters." }));
+      list.append(h("div", { class: "hint", text: t("Nothing yet. Tell Mochi “remember that…”, or let it pick up what matters.") }));
       return;
     }
     for (const n of notes) {
@@ -846,9 +881,9 @@ function memorySection(): HTMLElement {
         h("div", { class: "reminder" },
           h("span", { class: "when", text: n.created.replace("T", " ") }),
           h("span", { class: "what", text: n.text }),
-          h("span", { class: "origin", text: n.source === "mochi" ? "Mochi" : "you" }),
+          h("span", { class: "origin", text: n.source === "mochi" ? "Mochi" : t("you") }),
           h("button", {
-            title: "Forget this",
+            title: t("Forget this"),
             text: "×",
             onclick: async () => { await Bridge.memoryDelete(n.id); void refresh(); },
           }),
@@ -878,22 +913,22 @@ function memorySection(): HTMLElement {
 
   const clearBtn = h("button", {
     class: "danger",
-    text: "Forget everything",
+    text: t("Forget everything"),
     onclick: async () => {
-      if (!window.confirm("Delete everything Mochi remembers?")) return;
+      if (!window.confirm(t("Delete everything Mochi remembers?"))) return;
       await Bridge.memoryClear();
       void refresh();
-      flash("Memory cleared.");
+      flash(t("Memory cleared."));
     },
   });
 
   return h(
     "section",
     {},
-    h("h2", {}, h("span", { text: "Memory" })),
-    h("div", { class: "hint", text: "Mochi keeps short notes about you in a file on this PC (memory.json) and reads them at the start of every chat. It saves what you ask it to remember, and picks up lasting facts on its own, but never passwords, keys or other secrets. Adding a note never changes the others." }),
+    h("h2", {}, h("span", { text: t("Memory") })),
+    h("div", { class: "hint", text: t("Mochi keeps short notes about you in a file on this PC (memory.json) and reads them at the start of every chat. It saves what you ask it to remember, and picks up lasting facts on its own, but never passwords, keys or other secrets. Adding a note never changes the others.") }),
     list,
-    h("div", { class: "row" }, input, h("button", { class: "primary", text: "Add", onclick: () => void add() })),
+    h("div", { class: "row" }, input, h("button", { class: "primary", text: t("Add"), onclick: () => void add() })),
     h("div", { class: "row" }, clearBtn, status),
   );
 }
@@ -913,7 +948,7 @@ function remindersSection(): HTMLElement {
     const items = (await Bridge.remindersList()) ?? [];
     clear(list);
     if (items.length === 0) {
-      list.append(h("div", { class: "hint", text: "No reminders pending. Ask Mochi to remind you of something, or just mention it in the chat." }));
+      list.append(h("div", { class: "hint", text: t("No reminders pending. Ask Mochi to remind you of something, or just mention it in the chat.") }));
       return;
     }
     for (const r of items) {
@@ -922,7 +957,7 @@ function remindersSection(): HTMLElement {
           h("span", { class: "when", text: formatDue(r.due) }),
           h("span", { class: "what", text: r.text }),
           h("button", {
-            title: "Delete",
+            title: t("Delete"),
             text: "×",
             onclick: async () => { await Bridge.remindersDelete(r.id); void refresh(); },
           }),
@@ -936,7 +971,7 @@ function remindersSection(): HTMLElement {
 
   const minutes = h("select", {}) as HTMLSelectElement;
   for (const m of [15, 30, 60, 120]) {
-    minutes.append(h("option", { value: String(m), text: m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? "s" : ""}` }));
+    minutes.append(h("option", { value: String(m), text: m < 60 ? t("{n} minutes", { n: m }) : m === 60 ? t("1 hour") : t("{n} hours", { n: m / 60 }) }));
   }
   minutes.value = String(settings.proactiveMinutes);
   minutes.addEventListener("change", () => {
@@ -947,16 +982,16 @@ function remindersSection(): HTMLElement {
   return h(
     "section",
     {},
-    h("h2", {}, h("span", { text: "Reminders and interruptions" })),
-    h("div", { class: "hint", text: "Mochi sets reminders when you ask, and on its own when you mention something with a time. They pop up in the island at that moment, even if you are in another app." }),
+    h("h2", {}, h("span", { text: t("Reminders and interruptions") })),
+    h("div", { class: "hint", text: t("Mochi sets reminders when you ask, and on its own when you mention something with a time. They pop up in the island at that moment, even if you are in another app.") }),
     list,
     h("div", { class: "row" },
-      h("label", { text: "Interrupt me on its own" }),
+      h("label", { text: t("Interrupt me on its own") }),
       toggle(settings.proactive, (v) => { settings.proactive = v; void save(); }),
       minutes,
-      h("span", { class: "hint", text: "between check-ins" }),
+      h("span", { class: "hint", text: t("between check-ins") }),
     ),
-    h("div", { class: "hint", text: "Off by default. When on, every so often Mochi sends the clock, its saved notes and your pending reminders to your AI provider and decides whether something deserves an interruption. It never sends your screen, files or chats, stays quiet from 22:00 to 08:00, and usually says nothing." }),
+    h("div", { class: "hint", text: t("Off by default. When on, every so often Mochi sends the clock, its saved notes and your pending reminders to your AI provider and decides whether something deserves an interruption. It never sends your screen, files or chats, stays quiet from 22:00 to 08:00, and usually says nothing.") }),
   );
 }
 
@@ -968,6 +1003,7 @@ async function main() {
     settings = { ...settings, ...boot.settings };
     version = boot.version;
   }
+  setLanguage(settings.language);
   const status = (await Bridge.hooksStatus()) ?? {
     installed: false, settingsPath: "", hookPath: "", hookReady: false,
   };
@@ -994,7 +1030,7 @@ async function main() {
     generalSection(),
     h("div", {
       class: "hint",
-      text: "No telemetry. Network requests only go to the services you configure yourself.",
+      text: t("No telemetry. Network requests only go to the services you configure yourself."),
     }),
   );
 

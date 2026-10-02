@@ -7,6 +7,7 @@
 import { h, clear } from "./dom";
 import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
+import { t } from "../core/i18n";
 
 /** Dashed rounded rect drawn as SVG so the dashes can march like on macOS. */
 function dashedFrame(): SVGSVGElement {
@@ -29,15 +30,15 @@ function dashedFrame(): SVGSVGElement {
 
 export function buildUpload(actions: ViewActions): ViewHost {
   const frame = dashedFrame();
-  const title = h("div", { class: "drop-title", text: "Drop your files here" });
+  const title = h("div", { class: "drop-title", text: t("Drop your files here") });
   const tags = h(
     "div",
     { class: "drop-tags" },
-    ...["PDF", "Images", "Code", "Docs"].map((t) => h("span", { text: t })),
+    ...["PDF", t("Images"), t("Code"), t("Docs")].map((t) => h("span", { text: t })),
   );
   const card = h(
     "div",
-    { class: "card drop-card", title: "Click to choose a file", onclick: () => actions.pickFile() },
+    { class: "card drop-card", title: t("Click to choose a file"), onclick: () => actions.pickFile() },
     frame,
     h("div", { class: "drop-body" }, title, tags),
   );
@@ -71,7 +72,7 @@ export function buildUploading(): ViewHost {
       const pct = Math.round(State.uploadProgress * 100);
       label.textContent = done
         ? `✓  ${State.droppedFile?.name ?? "File"}`
-        : `Uploading ${State.droppedFile?.name ?? "file"}`;
+        : t("Uploading {name}", { name: State.droppedFile?.name ?? t("file") });
       label.classList.toggle("done", done);
       percent.textContent = done ? "" : `${pct} %`;
       const w = State.uploadProgress * 526;
@@ -85,18 +86,18 @@ export function buildUploading(): ViewHost {
 
 export function buildChoose(actions: ViewActions): ViewHost {
   const title = h("div", { class: "title" });
-  const sub = h("div", { class: "sub", text: "What do you want to do with it?" });
+  const sub = h("div", { class: "sub", text: t("What do you want to do with it?") });
   const row = h(
     "div",
     { class: "actions" },
     h("button", {
       class: "btn primary",
-      text: "Ask a question",
+      text: t("Ask a question"),
       onclick: () => actions.setView("prompt"),
     }),
     h("button", {
       class: "btn secondary",
-      text: "Cancel",
+      text: t("Cancel"),
       onclick: () => actions.setView(State.defaultView()),
     }),
   );

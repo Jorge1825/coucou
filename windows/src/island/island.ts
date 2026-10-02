@@ -128,6 +128,7 @@ export class Island {
     const actions: ViewActions = {
       setView: (v) => this.setView(v),
       collapse: () => this.collapse(),
+      minimize: () => this.minimize(),
       setFocus: (id) => {
         State.setFocus(id);
         Sound.play("blip");
@@ -350,6 +351,15 @@ export class Island {
     // back left it thinking the island was still open, and a click on the compact
     // island then did nothing — the island could never be reopened.
     this.fsm.forcePetit();
+  }
+
+  /**
+   * The header's minimize button: fold right now, no countdown. An approval
+   * still waiting keeps its badge on the compact island, so it isn't lost.
+   */
+  minimize() {
+    if (State.pendingApproval) State.setPillBadge("integration_claude", "approval");
+    this.collapse();
   }
 
   /** Alert from the hook server: open on this view. Pinned alerts never auto-close. */
@@ -627,6 +637,7 @@ export class Island {
 
   /** Docked and retracted: the wake strip lies along the edge (see style.css). */
   private syncDockClass() {
+    this.root.classList.toggle("collapsed", this.collapsed);
     this.root.classList.toggle("dock-left", this.collapsed && this.dock < 0);
     this.root.classList.toggle("dock-right", this.collapsed && this.dock > 0);
   }
@@ -1084,6 +1095,10 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    this.fsm.petitToHiddenDelay = Math.max(0, State.settings.hideAfter || 0);
+    // Hiding completely is opt-in; when it is on, the wake strip shows a small
+    // handle so the island can be found again without the tray.
+    this.root.classList.toggle("auto-hide", this.fsm.petitToHiddenDelay > 0);
     const { mochiHat, mochiFace } = State.settings;
     this.engine.hat = isHat(mochiHat) ? mochiHat : "none";
     this.engine.face = isFace(mochiFace) ? mochiFace : "none";

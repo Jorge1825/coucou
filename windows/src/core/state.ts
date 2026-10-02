@@ -122,6 +122,10 @@ export interface Settings {
   idleOpacity: number;
   /** Global shortcut that opens the chat, e.g. "Ctrl+Alt+M"; empty = none. */
   chatHotkey: string;
+  /** Seconds in the compact island before it hides completely; 0 = never. */
+  hideAfter: number;
+  /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
+  language: string;
 }
 
 /** Keeps a stored opacity inside what still leaves the island usable. */
@@ -172,6 +176,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cardOpacity: 1,
   idleOpacity: 1,
   chatHotkey: "Ctrl+Alt+M",
+  hideAfter: 0,
+  language: "auto",
 };
 
 type Listener = () => void;

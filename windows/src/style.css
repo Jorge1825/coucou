@@ -79,6 +79,34 @@ body {
 #root.dock-left #wake-strip { left: 0; }
 #root.dock-right #wake-strip { left: auto; right: 0; }
 
+/* A small visible handle on the wake strip, so a hidden island can be found. */
+#wake-strip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 44px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 0 0 4px 4px;
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+#root.dock-left #wake-strip::after,
+#root.dock-right #wake-strip::after {
+  top: 50%;
+  width: 4px;
+  height: 44px;
+  transform: translateY(-50%);
+}
+#root.dock-left #wake-strip::after { left: 0; border-radius: 0 4px 4px 0; }
+#root.dock-right #wake-strip::after { left: auto; right: 0; border-radius: 4px 0 0 4px; }
+#root.auto-hide.collapsed #wake-strip::after {
+  opacity: 1;
+}
+
 /* ── Island ─────────────────────────────────────────────────────────────── */
 
 #island {
@@ -268,6 +296,10 @@ body {
 }
 
 .header-actions button.on {
+  color: var(--ink);
+}
+
+.header-actions button.minimize:hover {
   color: var(--ink);
 }
 

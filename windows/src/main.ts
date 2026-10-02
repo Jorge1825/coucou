@@ -6,6 +6,7 @@ import { Sound } from "./core/sound";
 import { providerDef } from "./core/providers";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
+import { setLanguage } from "./core/i18n";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerSpotifyHandlers } from "./island/spotify";
@@ -34,13 +35,15 @@ async function main() {
     await new Promise((r) => setTimeout(r, 25));
   }
 
-  const island = new Island(root);
-
+  // Settings first: the views are built in the chosen language.
   const boot = await Bridge.boot();
   if (boot) {
     State.settings = { ...State.settings, ...boot.settings };
     Sound.setLead(boot.lead);
   }
+  setLanguage(State.settings.language);
+
+  const island = new Island(root);
   // Pointer events only reach a window while the cursor is over its island.
   document.addEventListener("pointermove", () => Sound.touch(), { passive: true });
   document.addEventListener("pointerdown", () => Sound.touch(), { passive: true });
@@ -106,6 +109,12 @@ async function main() {
 
   // The settings window writes preferences; apply them here without a restart.
   await onEvent<Settings>("settings-changed", (s) => {
+    // Every string is laid out once, in one language: a new language means a
+    // fresh page. Rare enough that the restart (and its greeting) is fine.
+    if (s.language !== State.settings.language) {
+      location.reload();
+      return;
+    }
     State.settings = { ...State.settings, ...s };
     island.applySettings();
     State.loadIntegrationTasks();

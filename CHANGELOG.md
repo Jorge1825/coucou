@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Windows: Mochi no longer vanishes on its own. The compact island used to hide completely after 60 s, leaving only an invisible 6 px strip to wake it; it now stays until you choose otherwise in Settings → General → Hide completely (Never / 1 / 5 / 15 min), and when it does hide a small bar marks where to point
+- Windows: interface in English, Spanish, Russian and Chinese — Settings → General → Language (Auto follows Windows). The island and Settings switch at once, and Mochi's chat answers in the chosen language
+- Windows: fix the build after the last merge (the chat shortcut setting had landed outside the Settings struct)
+- Windows: a minimize button (—) in the island header folds it right away, no countdown; auto-close can now be as short as 1 s (3 s quick choice in the island)
 - Windows: Settings → Transparency — island background, cards and a fade while the mouse is elsewhere, each as a slider, plus Solid / Glass / Ghost presets; changes show live on every display
 - Windows: one Mochi on every display. Each island remembers its own position and dock side on its display; hooks, integrations, Spotify and reminders reach all of them, an approval can be answered from any display, and event sounds play once. Settings → General → "Island lives on" → Every display (default) / Main display / Display under the cursor
 - Windows: Spotify in the island — while a song plays Mochi puts on headphones, sways to the beat and lets music notes out; a Spotify pill shows the track, cover and progress with previous / play-pause / next buttons. Read locally through Windows media sessions (no account, no network); can be switched off in Settings → Mochi

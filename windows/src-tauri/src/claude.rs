@@ -144,11 +144,33 @@ fn remember_schema() -> Value {
     })
 }
 
+/// The interface language from Settings ("auto", "en", "es", "ru", "zh").
+static LANGUAGE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+pub fn set_language(code: &str) {
+    *LANGUAGE.lock().unwrap() = code.to_string();
+}
+
+/// Tells the model which language to answer in, when one was picked. "auto"
+/// says nothing: the model answers in whatever language the user writes.
+pub fn language_instruction() -> Option<&'static str> {
+    match LANGUAGE.lock().unwrap().as_str() {
+        "en" => Some(" Always answer in English."),
+        "es" => Some(" Always answer in Spanish."),
+        "ru" => Some(" Always answer in Russian."),
+        "zh" => Some(" Always answer in Simplified Chinese."),
+        _ => None,
+    }
+}
+
 fn system_prompt(tools_on: bool, query: &str) -> String {
     // Not every note rides along on every message: only the newest and the ones
     // that relate to what was just asked (see context::select_notes).
     let notes = context::select_notes(&memory::load(), query);
     let mut prompt = SYSTEM_PROMPT.to_string();
+    if let Some(lang) = language_instruction() {
+        prompt.push_str(lang);
+    }
     if !tools_on {
         // No tools this turn: the model must not believe it has any, or some
         // models write the call out as plain text.

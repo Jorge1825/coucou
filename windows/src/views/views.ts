@@ -12,6 +12,7 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, spotifyKey, tickSpotifyCard, type IntegrationCardHooks } from "./integrations";
+import { t } from "../core/i18n";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -24,6 +25,8 @@ export interface ViewActions {
   decide(d: "allow" | "deny"): void;
   toggleSound(): void;
   setVolume(v: number): void;
+  /** The header's — button: fold to the compact island right away. */
+  minimize(): void;
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
   blip(): void;
@@ -81,17 +84,23 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
 // ── Header ────────────────────────────────────────────────────────────────────
 
 export function buildHeader(actions: ViewActions): ViewHost {
-  const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
-  const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
-  const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabHome = h("button", { class: "tab", title: t("Overview"), onclick: () => go("overview") }, svg(ICONS.house, 13));
+  const tabChat = h("button", { class: "tab", title: t("Ask"), onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
+  const tabDrop = h("button", { class: "tab", title: t("Drop"), onclick: () => go("upload") }, svg(ICONS.plus, 13));
 
-  const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));
+  const gearBtn = h("button", { title: t("Settings"), onclick: () => go("settings") }, svg(ICONS.gear, 14));
   const resetBtn = h(
     "button",
-    { title: "Reset position", onclick: () => void Bridge.resetPosition() },
+    { title: t("Reset position"), onclick: () => void Bridge.resetPosition() },
     svg(ICONS.target, 14),
   );
-  const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
+  const soundBtn = h("button", { title: t("Mute"), onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
+  // Fold the island now instead of waiting for the auto-close countdown.
+  const minimizeBtn = h(
+    "button",
+    { class: "minimize", title: t("Minimize"), onclick: () => actions.minimize() },
+    svg(ICONS.minimize, 14),
+  );
 
   function go(v: IslandViewName) {
     actions.blip();
@@ -102,7 +111,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     "div",
     { id: "header" },
     h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
-    h("div", { class: "header-actions" }, gearBtn, resetBtn, soundBtn),
+    h("div", { class: "header-actions" }, gearBtn, resetBtn, soundBtn, minimizeBtn),
   );
 
   return {
@@ -131,7 +140,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   const leftBody = h("div", { class: "left-body" });
   const jump = h(
     "button",
-    { class: "icon-btn jump", title: "Open", onclick: () => actions.openTarget() },
+    { class: "icon-btn jump", title: t("Open"), onclick: () => actions.openTarget() },
     svg(ICONS.arrowUpRight, 8),
   );
   const left = card(null, leftBody, jump);
@@ -290,11 +299,11 @@ function buildEmpty(actions: ViewActions): ViewHost {
     h(
       "div",
       { style: "display:flex;flex-direction:column;gap:5px" },
-      h("div", { class: "title", text: "Nothing running right now." }),
-      h("div", { class: "sub", text: "Drop a file or window, or ask me anything." }),
+      h("div", { class: "title", text: t("Nothing running right now.") }),
+      h("div", { class: "sub", text: t("Drop a file or window, or ask me anything.") }),
     ),
     h("div", { class: "grow" }),
-    btn("Ask Claude", "primary", () => actions.setView("prompt")),
+    btn(t("Ask Claude"), "primary", () => actions.setView("prompt")),
   );
   return { el: h("div", { class: "view" }, card(null, body)), sync() {} };
 }
@@ -311,7 +320,7 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "needs permission"));
+      who.append(agentWho(State.focusTask, t("needs permission")));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.
@@ -323,8 +332,8 @@ function buildApproval(actions: ViewActions): ViewHost {
       rowKey = "built";
       clear(row);
       row.append(
-        btn("Deny", "secondary", () => actions.decide("deny"), "N"),
-        btn("Allow", "primary", () => actions.decide("allow"), "Y"),
+        btn(t("Deny"), "secondary", () => actions.decide("deny"), "N"),
+        btn(t("Allow"), "primary", () => actions.decide("allow"), "Y"),
       );
     },
   };
@@ -341,11 +350,11 @@ function buildQuestion(): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
+      who.append(agentWho(State.focusTask, t("Claude Code is asking a question")));
       const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
+      title.textContent = task?.steps.at(-1) ?? t("Claude needs an answer.");
       clear(row);
-      row.append(h("div", { class: "sub", text: "Answer in your terminal — Coucou can't reply for you yet." }));
+      row.append(h("div", { class: "sub", text: t("Answer in your terminal — Coucou can't reply for you yet.") }));
     },
   };
 }
@@ -354,11 +363,11 @@ function buildQuestion(): ViewHost {
 
 function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title", text: "Workflow stopped." });
+  const title = h("div", { class: "title", text: t("Workflow stopped.") });
   const detail = h("div", { class: "detail" });
   const row = h("div", { class: "actions" },
-    btn("Retry", "primary", () => actions.setView(State.defaultView())),
-    btn("Open in n8n", "secondary", () => actions.openUrl("")),
+    btn(t("Retry"), "primary", () => actions.setView(State.defaultView())),
+    btn(t("Open in n8n"), "secondary", () => actions.openUrl("")),
   );
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
   return {
@@ -367,8 +376,8 @@ function buildError(actions: ViewActions): ViewHost {
       const task = State.focusTask;
       clear(who);
       who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "Workflow stopped." : "Session stopped on an error.";
-      detail.textContent = task?.steps.at(-1) ?? "No detail available.";
+      title.textContent = task?.source === "n8n" ? t("Workflow stopped.") : t("Session stopped on an error.");
+      detail.textContent = task?.steps.at(-1) ?? t("No detail available.");
     },
   };
 }
@@ -380,8 +389,8 @@ function buildFinished(actions: ViewActions): ViewHost {
   const title = h("div", { class: "title" });
   const asked = h("div", { class: "sub", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" });
   const row = h("div", { class: "actions" },
-    btn("Open terminal", "primary", () => actions.openTerminal()),
-    btn("OK", "secondary", () => actions.collapse()),
+    btn(t("Open terminal"), "primary", () => actions.openTerminal()),
+    btn(t("OK"), "secondary", () => actions.collapse()),
   );
   const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, asked, row)));
   return {
@@ -389,10 +398,10 @@ function buildFinished(actions: ViewActions): ViewHost {
     sync() {
       const task = State.focusTask;
       clear(who);
-      who.append(agentWho(task, "Claude Code finished"));
+      who.append(agentWho(task, t("Claude Code finished")));
       // What it did, not just the last thing it touched; and what it was for.
-      title.textContent = task?.summary ?? task?.steps.at(-1) ?? "Session finished";
-      asked.textContent = task?.lastPrompt ? `For: “${task.lastPrompt}”` : "";
+      title.textContent = task?.summary ?? task?.steps.at(-1) ?? t("Session finished");
+      asked.textContent = task?.lastPrompt ? t("For: “{prompt}”", { prompt: task.lastPrompt }) : "";
       asked.style.display = task?.lastPrompt ? "" : "none";
     },
   };
@@ -404,8 +413,8 @@ function buildConfused(): ViewHost {
   const body = h(
     "div",
     { class: "stack", style: "padding:0 18px 0 128px" },
-    h("div", { class: "title", text: "Too many hits at once." }),
-    h("div", { class: "sub", text: "Give me a sec — back to work in three seconds." }),
+    h("div", { class: "title", text: t("Too many hits at once.") }),
+    h("div", { class: "sub", text: t("Give me a sec — back to work in three seconds.") }),
   );
   return { el: h("div", { class: "view" }, card("pink", body)), sync() {} };
 }
@@ -425,6 +434,9 @@ function buildNote(): ViewHost {
 
 // ── In-island settings ────────────────────────────────────────────────────────
 
+/** Quick auto-close choices, in seconds after the mouse leaves. */
+const AUTO_CLOSE_CHOICES = [3, 10, 15, 30];
+
 function buildSettings(actions: ViewActions): ViewHost {
   const soundSwitch = h("button", { class: "switch", onclick: () => actions.toggleSound() });
   const volume = h("input", {
@@ -432,7 +444,7 @@ function buildSettings(actions: ViewActions): ViewHost {
     oninput: (e: Event) => actions.setVolume(Number((e.target as HTMLInputElement).value)),
   }) as HTMLInputElement;
   const autoLabel = h("span", {});
-  const segButtons = [10, 15, 30].map((s) =>
+  const segButtons = AUTO_CLOSE_CHOICES.map((s) =>
     h("button", { onclick: () => actions.setAutoClose(s) }, `${s}s`),
   );
   const claudeBadge = h("span", { class: "status-badge" });
@@ -441,7 +453,7 @@ function buildSettings(actions: ViewActions): ViewHost {
   const rows = h(
     "div",
     { class: "settings-rows" },
-    h("div", { class: "settings-row" }, soundSwitch, h("span", { text: "Sound" }), volume),
+    h("div", { class: "settings-row" }, soundSwitch, h("span", { text: t("Sound") }), volume),
     h(
       "div",
       { class: "settings-row" },
@@ -458,7 +470,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       h("button", {
         class: "link-btn",
         style: "color:#8e939c;font-size:11.5px",
-        text: "Settings…",
+        text: t("Settings…"),
         onclick: () => actions.openSettingsWindow(),
       }),
     ),
@@ -474,8 +486,8 @@ function buildSettings(actions: ViewActions): ViewHost {
       soundSwitch.classList.toggle("on", s.soundEnabled);
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
-      autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;
-      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
+      autoLabel.textContent = t("Auto-close · {s}s", { s: Math.round(s.autoCloseInterval) });
+      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === AUTO_CLOSE_CHOICES[i]));
       clear(claudeBadge);
       claudeBadge.append(
         dot(s.hooksInstalled ? "#22C55E" : "#F4505E", 6),
@@ -520,8 +532,8 @@ export function buildViews(
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
-  map.set("mail", buildPlaceholder("Sending by email isn't in this version.", ""));
-  map.set("searching", buildPlaceholder("Claude is searching…", ""));
-  map.set("result", buildPlaceholder("Result", ""));
+  map.set("mail", buildPlaceholder(t("Sending by email isn't in this version."), ""));
+  map.set("searching", buildPlaceholder(t("Claude is searching…"), ""));
+  map.set("result", buildPlaceholder(t("Result"), ""));
   return map;
 }

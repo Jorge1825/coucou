@@ -93,6 +93,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         *current = settings.clone();
         (screen_changed, autostart_changed)
     };
+    claude::set_language(&settings.language);
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
     }
@@ -555,6 +556,7 @@ fn create_island_window(app: &AppHandle, label: &str) {
 
 pub fn run() {
     let loaded = settings::load();
+    claude::set_language(&loaded.language);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

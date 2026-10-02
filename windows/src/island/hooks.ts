@@ -7,6 +7,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
+import { t } from "../core/i18n";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -123,19 +124,20 @@ function tally(agentId: string, tool: string, input: Record<string, unknown>) {
 /** "Edited 3 files · ran 5 commands" — null when nothing worth saying happened. */
 function summarize(a: Activity | undefined): string | null {
   if (!a) return null;
-  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  // One string per number form, so each language can word it its own way.
+  const n = (count: number, one: string, many: string) => t(count === 1 ? one : many, { n: count });
   const parts: string[] = [];
-  if (a.edited.size) parts.push(`edited ${n(a.edited.size, "file", "files")}`);
-  if (a.commands) parts.push(`ran ${n(a.commands, "command", "commands")}`);
-  if (a.read.size) parts.push(`read ${n(a.read.size, "file", "files")}`);
-  if (a.searches) parts.push(`${n(a.searches, "search", "searches")}`);
+  if (a.edited.size) parts.push(n(a.edited.size, "edited 1 file", "edited {n} files"));
+  if (a.commands) parts.push(n(a.commands, "ran 1 command", "ran {n} commands"));
+  if (a.read.size) parts.push(n(a.read.size, "read 1 file", "read {n} files"));
+  if (a.searches) parts.push(n(a.searches, "1 search", "{n} searches"));
   if (parts.length === 0) return null;
   const text = parts.join(" · ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
-  const label = TOOL_LABELS[tool] ?? tool;
+  const label = TOOL_LABELS[tool] ? t(TOOL_LABELS[tool]) : tool;
   const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
   const cmd = str("command");
   if (cmd) return `${label} · ${cmd.slice(0, 40)}`;
@@ -290,7 +292,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PostToolUseFailure":
       State.updateTask(agentId, "working");
-      State.appendStep(agentId, "⚠ failed");
+      State.appendStep(agentId, t("⚠ failed"));
       break;
 
     case "Notification": {
@@ -340,11 +342,11 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SubagentStart":
-      State.appendStep(agentId, "+ subagent");
+      State.appendStep(agentId, t("+ subagent"));
       break;
 
     case "SubagentStop":
-      State.appendStep(agentId, "• subagent done");
+      State.appendStep(agentId, t("• subagent done"));
       break;
 
     case "PermissionRequest": {
