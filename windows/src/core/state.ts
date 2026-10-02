@@ -19,6 +19,10 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** What the last request did ("Edited 3 files · ran 5 commands"), once it finished. */
+  summary?: string | null;
+  /** What the user asked for in the last request, shortened. */
+  lastPrompt?: string | null;
 }
 
 export interface ApprovalInfo {
@@ -64,13 +68,14 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_vercel", "Vercel", "#7C5CFF", "n8n"),
   task("integration_github", "GitHub", "#F4505E", "n8n"),
   task("integration_notion", "Notion", "#8C8C8C", "n8n"),
+  task("integration_linear", "Linear", "#5E6AD2", "n8n"),
   task("integration_calcom", "Cal.com", "#C9956A", "n8n"),
   task("integration_stripe", "Stripe", "#0570DE", "n8n"),
 ];
 
 export const TOGGLEABLE_INTEGRATION_IDS = [
   "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
-  "integration_notion", "integration_calcom", "integration_stripe",
+  "integration_notion", "integration_linear", "integration_calcom", "integration_stripe",
 ];
 
 /** What an integration poller last reported. */
@@ -105,6 +110,8 @@ export interface Settings {
   proactive: boolean;
   /** Minutes between check-ins. */
   proactiveMinutes: number;
+  /** Global shortcut that opens the chat, e.g. "Ctrl+Alt+M"; empty = none. */
+  chatHotkey: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -126,6 +133,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mochiFace: "none",
   proactive: false,
   proactiveMinutes: 30,
+  chatHotkey: "Ctrl+Alt+M",
 };
 
 type Listener = () => void;
@@ -205,6 +213,13 @@ class AppState {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
     t.state = state;
+    this.notify();
+  }
+
+  patchTask(id: string, patch: Partial<AgentTask>) {
+    const t = this.tasks.find((x) => x.id === id);
+    if (!t) return;
+    Object.assign(t, patch);
     this.notify();
   }
 

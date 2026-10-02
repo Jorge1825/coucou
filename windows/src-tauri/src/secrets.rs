@@ -20,6 +20,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "stripe-api-key",
     "resend-api-key",
     "notion-api-key",
+    "linear-api-key",
     "calcom-api-key",
 ];
 

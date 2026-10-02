@@ -68,7 +68,8 @@ pub fn start(app: AppHandle) {
     spawn(app.clone(), "integration_resend", 6, 60, poll_resend);
     spawn(app.clone(), "integration_github", 7, 300, poll_github);
     spawn(app.clone(), "integration_calcom", 8, 300, poll_calcom);
-    spawn(app, "integration_notion", 9, 300, poll_notion);
+    spawn(app.clone(), "integration_notion", 9, 300, poll_notion);
+    spawn(app, "integration_linear", 10, 300, poll_linear);
 }
 
 /// True when the user has this integration switched on in settings.
@@ -112,6 +113,7 @@ pub async fn poll_once(app: AppHandle, id: &str) {
         "integration_n8n" => poll_n8n(app).await,
         "integration_resend" => poll_resend(app).await,
         "integration_notion" => poll_notion(app).await,
+        "integration_linear" => poll_linear(app).await,
         "integration_calcom" => poll_calcom(app).await,
         _ => {}
     }
@@ -544,6 +546,71 @@ fn parse_notion_page(obj: &Value) -> Option<Value> {
     }))
 }
 
+// ── Linear ────────────────────────────────────────────────────────────────────
+
+/// Open issues assigned to the key's owner, most recently touched first. Read-only.
+const LINEAR_QUERY: &str = "query { viewer { assignedIssues(first: 5, orderBy: updatedAt, \
+    filter: { state: { type: { nin: [\"completed\", \"canceled\"] } } }) { \
+    nodes { identifier title url updatedAt priority state { name type color } } } } }";
+
+async fn poll_linear(app: AppHandle) {
+    let Some(key) = secrets::get("linear-api-key") else { return };
+    let response = client()
+        .post("https://api.linear.app/graphql")
+        // A personal API key goes in the header as it is, without "Bearer".
+        .header("Authorization", key)
+        .header("Content-Type", "application/json")
+        .json(&json!({ "query": LINEAR_QUERY }))
+        .send()
+        .await;
+    let Ok(response) = response else { return };
+    let code = response.status().as_u16();
+    let body: Value = response.json().await.unwrap_or(json!({}));
+
+    // GraphQL reports most failures as a 200/400 with an `errors` array.
+    if code != 200 || body.get("errors").is_some() {
+        let reason = body
+            .pointer("/errors/0/message")
+            .and_then(Value::as_str)
+            .map(|m| m.chars().take(80).collect::<String>());
+        emit(&app, IntegrationUpdate {
+            id: "integration_linear",
+            data: json!({}),
+            error: Some(match (code, reason) {
+                (400 | 401 | 403, _) => "Invalid API key".to_string(),
+                (_, Some(reason)) => reason,
+                (code, None) => format!("API error {code}"),
+            }),
+            event: None,
+        });
+        return;
+    }
+
+    let issues: Vec<Value> = body
+        .pointer("/data/viewer/assignedIssues/nodes")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(parse_linear_issue).collect())
+        .unwrap_or_default();
+
+    emit(&app, IntegrationUpdate {
+        id: "integration_linear",
+        data: json!({ "issues": issues }),
+        error: None,
+        event: None,
+    });
+}
+
+fn parse_linear_issue(obj: &Value) -> Option<Value> {
+    Some(json!({
+        "id": obj.get("identifier")?.as_str()?,
+        "title": obj.get("title").and_then(Value::as_str).unwrap_or("Untitled"),
+        "url": obj.get("url").and_then(Value::as_str).unwrap_or("https://linear.app"),
+        "updatedAt": obj.get("updatedAt").and_then(Value::as_str)?,
+        "state": obj.pointer("/state/name").and_then(Value::as_str).unwrap_or(""),
+        "stateColor": obj.pointer("/state/color").and_then(Value::as_str).unwrap_or(""),
+    }))
+}
+
 // ── Cal.com ───────────────────────────────────────────────────────────────────
 
 async fn poll_calcom(app: AppHandle) {
@@ -761,5 +828,39 @@ fn fmt_value(v: &Value) -> String {
         Value::Array(a) => format!("[{}]", a.len()),
         Value::Object(_) => "{…}".into(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod linear_tests {
+    use super::{parse_linear_issue, LINEAR_QUERY};
+    use serde_json::json;
+
+    #[test]
+    fn the_query_is_well_formed_graphql() {
+        let opens = LINEAR_QUERY.matches('{').count();
+        let closes = LINEAR_QUERY.matches('}').count();
+        assert_eq!(opens, closes, "unbalanced braces: {LINEAR_QUERY}");
+        assert!(!LINEAR_QUERY.contains('\\'), "stray backslash: {LINEAR_QUERY}");
+        assert!(LINEAR_QUERY.contains("nin: [\"completed\", \"canceled\"]"));
+        assert!(!LINEAR_QUERY.contains("  "), "line continuation left extra spaces");
+    }
+
+    #[test]
+    fn parses_an_issue_and_tolerates_missing_fields() {
+        let issue = parse_linear_issue(&json!({
+            "identifier": "ENG-42", "title": "Fix login", "url": "https://linear.app/x/issue/ENG-42",
+            "updatedAt": "2026-10-02T10:00:00.000Z",
+            "state": { "name": "In Progress", "type": "started", "color": "#f2c94c" }
+        }))
+        .unwrap();
+        assert_eq!(issue["id"], "ENG-42");
+        assert_eq!(issue["state"], "In Progress");
+        assert_eq!(issue["stateColor"], "#f2c94c");
+
+        let bare = parse_linear_issue(&json!({ "identifier": "ENG-1", "updatedAt": "2026-10-02T10:00:00Z" })).unwrap();
+        assert_eq!(bare["title"], "Untitled");
+        assert_eq!(bare["state"], "");
+        assert!(parse_linear_issue(&json!({ "title": "no id" })).is_none());
     }
 }

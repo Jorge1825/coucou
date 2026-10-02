@@ -42,6 +42,13 @@ pub struct Settings {
     /// Minutes between check-ins when `proactive` is on.
     #[serde(default = "default_proactive_minutes")]
     pub proactive_minutes: u32,
+    /// Global shortcut that opens the chat; empty = none.
+    #[serde(default = "default_chat_hotkey")]
+    pub chat_hotkey: String,
+}
+
+fn default_chat_hotkey() -> String {
+    crate::hotkey::DEFAULT.into()
 }
 
 fn default_proactive_minutes() -> u32 {
@@ -88,6 +95,7 @@ impl Default for Settings {
             mochi_face: default_none(),
             proactive: false,
             proactive_minutes: default_proactive_minutes(),
+            chat_hotkey: default_chat_hotkey(),
         }
     }
 }
