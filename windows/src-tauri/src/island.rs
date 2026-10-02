@@ -69,6 +69,21 @@ pub struct IslandWin {
     dock: AtomicI32,
     /// WebView zoom correction, see `fit_zoom` in lib.rs.
     pub zoom: Mutex<f64>,
+    /// Where the window was last placed, so the 60 Hz cursor poll never has to
+    /// ask the UI thread (every window getter is a round trip to it, and three
+    /// of them per tick per island made native window drags stutter).
+    frame: Mutex<Option<Frame>>,
+}
+
+/// Window origin and size (physical px), its scale, and its display's rect.
+#[derive(Clone, Copy)]
+struct Frame {
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    scale: f64,
+    monitor: (i32, i32, i32, i32),
 }
 
 static ISLANDS: Mutex<Vec<Arc<IslandWin>>> = Mutex::new(Vec::new());
@@ -82,6 +97,7 @@ pub fn register(label: &str) -> Arc<IslandWin> {
         dragging: AtomicBool::new(false),
         dock: AtomicI32::new(0),
         zoom: Mutex::new(1.0),
+        frame: Mutex::new(None),
     });
     ISLANDS.lock().unwrap().push(iw.clone());
     iw
@@ -381,9 +397,9 @@ pub fn begin_drag(app: &AppHandle, iw: Arc<IslandWin>) {
             if shaken {
                 continue;
             }
-            if let (Some(win), Some(m)) = (window_of(&app, &iw), monitor_of(&app, &iw)) {
+            if let (Some(win), Some(f)) = (window_of(&app, &iw), *iw.frame.lock().unwrap()) {
                 if let Ok(pos) = win.outer_position() {
-                    let swing = SHAKE_SWING * m.scale_factor();
+                    let swing = SHAKE_SWING * f.scale;
                     let t = started.elapsed().as_millis() as u64;
                     if shake.feed(pos.x as f64, pos.y as f64, t, swing) {
                         shaken = true;
@@ -661,6 +677,14 @@ pub fn apply_geometry(app: &AppHandle, iw: &IslandWin, collapsed: bool) {
     // Moving across displays can rescale the window: re-assert the physical size.
     let _ = win.set_size(PhysicalSize::new(pw, ph));
     let _ = win.set_always_on_top(true);
+    *iw.frame.lock().unwrap() = Some(Frame {
+        x,
+        y,
+        w: pw,
+        h: ph,
+        scale,
+        monitor: (mp.x, mp.y, ms.width as i32, ms.height as i32),
+    });
 
     // Windows can clamp or lag a resize (DPI change between displays, the window
     // coming out of the 240 px strip). A panel narrower than the 640 px island
@@ -763,9 +787,58 @@ fn layout_key(app: &AppHandle) -> Option<Layout> {
 
 /// Last display layout seen by any island's poll.
 static LAYOUT: Mutex<Option<Layout>> = Mutex::new(None);
+/// When the layout was last checked — once every LAYOUT_EVERY for all islands
+/// together, not twice a second per island.
+static LAYOUT_CHECKED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+const LAYOUT_EVERY: Duration = Duration::from_secs(2);
+
+/// Cursor poll period while the cursor is on this island's display.
+const POLL_NEAR: Duration = Duration::from_millis(16);
+/// …and while it is on another display: nothing to track, just notice it coming back.
+const POLL_FAR: Duration = Duration::from_millis(120);
+
+fn check_layout(app: &AppHandle) {
+    {
+        let mut checked = LAYOUT_CHECKED.lock().unwrap();
+        if checked.is_some_and(|t| t.elapsed() < LAYOUT_EVERY) {
+            return;
+        }
+        *checked = Some(std::time::Instant::now());
+    }
+    let Some(now) = layout_key(app) else { return };
+    let changed = {
+        let mut seen = LAYOUT.lock().unwrap();
+        let changed = seen.as_ref().is_some_and(|s| *s != now);
+        *seen = Some(now);
+        changed
+    };
+    if changed {
+        crate::log::line("display layout changed — repositioning".to_string());
+        assign_monitors(app);
+        emit_all(app, "screen-changed", ());
+    }
+}
+
+/// The window's frame: the cached one, or — while Windows is moving the window
+/// under a drag, or before the first placement — read once from the window.
+fn frame_of(iw: &IslandWin, win: &WebviewWindow) -> Option<Frame> {
+    let cached = *iw.frame.lock().unwrap();
+    if let Some(f) = cached {
+        if !iw.dragging.load(Ordering::Relaxed) {
+            return Some(f);
+        }
+        let pos = win.outer_position().ok()?;
+        return Some(Frame { x: pos.x, y: pos.y, ..f });
+    }
+    let pos = win.outer_position().ok()?;
+    let size = win.inner_size().ok()?;
+    let scale = win.scale_factor().unwrap_or(1.0);
+    Some(Frame { x: pos.x, y: pos.y, w: size.width, h: size.height, scale, monitor: (i32::MIN, i32::MIN, i32::MAX, i32::MAX) })
+}
 
 /// Emits `cursor` (window-logical coordinates) to its own island at ~60 Hz while
-/// that island is visible. Parked on a condvar the rest of the time.
+/// that island is visible and the cursor is on its display; slower, and silent,
+/// while the cursor is on another display. Parked on a condvar the rest of the time.
 pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
     let gate = iw.gate.clone();
     std::thread::spawn(move || {
@@ -773,45 +846,43 @@ pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
         loop {
             gate.wait_until_active();
             let mut last = (f64::MIN, f64::MIN);
-            let mut ticks: u32 = 0;
+            let mut away = false;
             while gate.is_active() {
-                std::thread::sleep(Duration::from_millis(16));
+                std::thread::sleep(if away { POLL_FAR } else { POLL_NEAR });
 
                 // Monitors get plugged in, unplugged, rearranged and rescaled, and
                 // an island pinned to coordinates that no longer exist is an island
-                // nobody can reach. Checked about twice a second — the cursor poll
-                // is already running, so this costs one monitor query.
-                ticks = ticks.wrapping_add(1);
-                if ticks % 30 == 0 {
-                    if let Some(now) = layout_key(&app) {
-                        let changed = {
-                            let mut seen = LAYOUT.lock().unwrap();
-                            let changed = seen.as_ref().is_some_and(|s| *s != now);
-                            *seen = Some(now);
-                            changed
-                        };
-                        if changed {
-                            crate::log::line("display layout changed — repositioning".to_string());
-                            assign_monitors(&app);
-                            emit_all(&app, "screen-changed", ());
-                        }
-                    }
-                }
+                // nobody can reach.
+                check_layout(&app);
 
                 let Some(win) = window_of(&app, &iw) else { continue };
-                let Ok(origin) = win.outer_position() else { continue };
-                let scale = win.scale_factor().unwrap_or(1.0);
+                let Some(f) = frame_of(&iw, &win) else { continue };
                 let Some((cx, cy)) = cursor_physical() else { continue };
-                let x = (cx - origin.x as f64) / scale;
-                let y = (cy - origin.y as f64) / scale;
-                let size = match win.inner_size() {
-                    Ok(s) => (s.width as f64 / scale, s.height as f64 / scale),
-                    Err(_) => (PANEL_W, PANEL_H),
-                };
+                let x = (cx - f.x as f64) / f.scale;
+                let y = (cy - f.y as f64) / f.scale;
                 if (x - last.0).abs() < 1.0 && (y - last.1).abs() < 1.0 {
                     continue;
                 }
                 last = (x, y);
+
+                // Cursor on another display: tell the island once (so it sees the
+                // mouse leave), make sure it lets clicks through, then go quiet.
+                let (mx, my, mw, mh) = f.monitor;
+                let on_display = cx >= mx as f64
+                    && cy >= my as f64
+                    && cx < mx as f64 + mw as f64
+                    && cy < my as f64 + mh as f64;
+                if !on_display {
+                    if !away {
+                        away = true;
+                        if !gate.ignoring.swap(true, Ordering::Relaxed) {
+                            let _ = win.set_ignore_cursor_events(true);
+                        }
+                        let _ = app.emit_to(iw.label.as_str(), "cursor", CursorPayload { x, y });
+                    }
+                    continue;
+                }
+                away = false;
 
                 // Click-through: the window only takes the mouse over the island
                 // shape. A small entry margin means the flag is already off by the
@@ -839,11 +910,8 @@ pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
                 }
                 was_down = down;
 
-                let dragging = down
-                    && x >= 0.0
-                    && x <= size.0
-                    && y >= 0.0
-                    && y <= size.1;
+                let size = (f.w as f64 / f.scale, f.h as f64 / f.scale);
+                let dragging = down && x >= 0.0 && x <= size.0 && y >= 0.0 && y <= size.1;
 
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {

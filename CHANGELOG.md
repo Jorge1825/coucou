@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Windows: lighter and smoother. The cursor poll no longer asks the UI thread for the window geometry 180 times a second (drags no longer stutter), goes quiet while the cursor is on another display, and checks the display layout once every 2 s for all islands; ambient motion (breathing, dancing) runs at 30 fps — 20 in the compact island — while anything you drive stays at 60; hidden mini bots and CSS animations in hidden views stop drawing; Spotify is looked for every 5 s while closed. With music playing, total CPU went from ~18 % to ~3 %
 - Windows: Mochi no longer vanishes on its own. The compact island used to hide completely after 60 s, leaving only an invisible 6 px strip to wake it; it now stays until you choose otherwise in Settings → General → Hide completely (Never / 1 / 5 / 15 min), and when it does hide a small bar marks where to point
 - Windows: interface in English, Spanish, Russian and Chinese — Settings → General → Language (Auto follows Windows). The island and Settings switch at once, and Mochi's chat answers in the chosen language
 - Windows: fix the build after the last merge (the chat shortcut setting had landed outside the Settings struct)

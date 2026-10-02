@@ -25,6 +25,9 @@ use crate::log;
 /// interpolates the progress bar in between.
 const EVERY: Duration = Duration::from_millis(1500);
 
+/// How often to look for Spotify while it isn't open.
+const IDLE_EVERY: Duration = Duration::from_secs(5);
+
 /// Album covers bigger than this are skipped rather than shipped to the webview.
 const MAX_ART: u32 = 512 * 1024;
 
@@ -60,7 +63,8 @@ pub fn start(app: AppHandle) {
         let mut manager: Option<Manager_> = None;
         let mut last = NowPlaying::default();
         loop {
-            std::thread::sleep(EVERY);
+            // Spotify closed: nothing to follow closely, look again now and then.
+            std::thread::sleep(if last.active { EVERY } else { IDLE_EVERY });
             if crate::integrations::PAUSED.load(Ordering::Relaxed) || !enabled(&app) {
                 if last.active {
                     last = NowPlaying::default();

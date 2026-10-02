@@ -79,9 +79,16 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
   }
 }
 
-export function tickMiniBots(dt: number) {
+/**
+ * Animates and draws the mini bots inside `visible` only. The pills and the
+ * compact grid both stay in the DOM whatever the mode; drawing the ones nobody
+ * can see was half the per-frame canvas work.
+ */
+export function tickMiniBots(dt: number, visible: Element | null) {
+  if (!visible) return;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   for (const mb of live.values()) {
+    if (!visible.contains(mb.canvas)) continue;
     const ctx = mb.canvas.getContext("2d");
     if (!ctx) continue;
     mb.engine.update(dt);

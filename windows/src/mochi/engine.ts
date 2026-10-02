@@ -569,6 +569,11 @@ export class BotEngine {
     this.morph = 0;
   }
 
+  /** A scripted animation (hop, roll, wave…) is playing: worth full frame rate. */
+  get tweening(): boolean {
+    return this.tweens.size > 0;
+  }
+
   /** True while anything is still moving — lets the island stop its RAF loop. */
   get busy(): boolean {
     return (

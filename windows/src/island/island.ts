@@ -23,6 +23,18 @@ import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
 
+/**
+ * Frame budget for ambient motion — breathing, dancing, sleeping z's — when
+ * nothing is being interacted with. Half of 60 Hz looks the same for a slow
+ * sway and halves what the GPU has to compose for a transparent window. Anything
+ * the user drives (cursor, drag, opening, tweens) still runs every frame.
+ */
+const AMBIENT_FRAME_MS = 1000 / 30;
+/** Compact, Mochi is 20 px across: a slower budget is indistinguishable. */
+const AMBIENT_FRAME_MS_COMPACT = 1000 / 20;
+/** The cursor moved this recently: Mochi is following it, keep full rate. */
+const CURSOR_ACTIVE_MS = 400;
+
 /** Settings → Transparency, as CSS variables (see :root in style.css). */
 function applyTransparency(s: Settings) {
   const root = document.documentElement.style;
@@ -91,6 +103,8 @@ export class Island {
   private collapseTimer: number | null = null;
   private pickingFile = false;
   private wasInIsland = false;
+  /** Last cursor event, for the frame budget (see ambientOnly). */
+  private lastCursorMs = 0;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
   private countdownTimer: number | null = null;
@@ -752,6 +766,7 @@ export class Island {
 
   /** Cursor in window-logical coordinates. */
   onCursor(x: number, y: number) {
+    this.lastCursorMs = performance.now();
     State.mouse = { x, y };
     const rect = this.islandRect();
     State.mouseInIsland = { x: x - rect.x, y: y - rect.y };
@@ -862,8 +877,28 @@ export class Island {
     requestAnimationFrame(this.frame);
   }
 
+  /** Only slow, looping motion is left on screen (see AMBIENT_FRAME_MS). */
+  private ambientOnly(nowMs: number): boolean {
+    return (
+      !this.dirty &&
+      !this.width.animating && !this.height.animating && !this.radius.animating &&
+      this.botCx.settled && this.botCy.settled && this.botSize.settled &&
+      !this.engine.tweening &&
+      !UploadSeq.isActive &&
+      !(State.mode === "expanded" && State.view === "greeting") &&
+      nowMs - this.lastCursorMs > CURSOR_ACTIVE_MS
+    );
+  }
+
   private frame = (nowMs: number) => {
-    const dt = Math.min(0.05, (nowMs - this.lastFrame) / 1000);
+    const sinceLast = nowMs - this.lastFrame;
+    const budget = State.mode === "compact" ? AMBIENT_FRAME_MS_COMPACT : AMBIENT_FRAME_MS;
+    if (sinceLast < budget - 1 && this.ambientOnly(nowMs)) {
+      // Sleep through the rest of the slot instead of waking every vsync.
+      window.setTimeout(() => requestAnimationFrame(this.frame), budget - sinceLast);
+      return;
+    }
+    const dt = Math.min(0.05, sinceLast / 1000);
     this.lastFrame = nowMs;
 
     this.width.step(dt, nowMs);
@@ -900,7 +935,14 @@ export class Island {
     this.uploadCanvas.el.classList.toggle("on", uploadActive);
     this.viewsEl.classList.toggle("hidden-by-upload", uploadActive);
 
-    tickMiniBots(dt);
+    tickMiniBots(
+      dt,
+      State.mode === "compact"
+        ? this.miniGrid
+        : State.mode === "expanded" && State.view === "overview"
+          ? this.views.get("overview")?.el ?? null
+          : null,
+    );
     this.views.get(State.view)?.tick?.(nowMs);
     if (UploadSeq.isActive) this.stepSequence();
 
@@ -1048,6 +1090,8 @@ export class Island {
     this.contentEl.classList.toggle("paused", !(expanded && !greetingActive));
     this.contentEl.style.opacity = expanded && !greetingActive ? "1" : "0";
     this.contentEl.style.pointerEvents = expanded && !greetingActive ? "auto" : "none";
+    // Content faded out (compact / hidden): its CSS animations would still repaint.
+    this.contentEl.classList.toggle("asleep", !expanded || greetingActive);
     this.greetingCanvas.style.display = greetingActive ? "block" : "none";
 
     this.header.sync();

@@ -107,6 +107,13 @@ body {
   opacity: 1;
 }
 
+/* Views that aren't on screen keep their elements (opacity 0), and an infinite
+   CSS animation on an invisible element still repaints every frame. Pause them. */
+.view:not(.on) *,
+#content.asleep * {
+  animation-play-state: paused !important;
+}
+
 /* ── Island ─────────────────────────────────────────────────────────────── */
 
 #island {
