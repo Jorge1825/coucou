@@ -60,23 +60,79 @@ function lastPathComponent(p: string): string {
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
 }
 
-/** frenchStep() — same labels as the macOS app. */
+/** What Claude Code is doing, in words anyone can read at a glance. */
 const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
-  NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
+  Bash: "Running",
+  Read: "Reading",
+  Write: "Writing",
+  Edit: "Editing",
+  Glob: "Finding files",
+  Grep: "Searching code",
+  WebSearch: "Searching the web",
+  WebFetch: "Fetching",
+  TodoWrite: "Planning",
+  Task: "Delegating",
+  LS: "Listing",
+  MultiEdit: "Editing",
+  NotebookEdit: "Editing notebook",
+  PowerShell: "Running",
 };
+
+/** What one request of Claude Code did, so the finish card can say it. */
+interface Activity {
+  edited: Set<string>;
+  read: Set<string>;
+  commands: number;
+  searches: number;
+}
+
+const activity = new Map<string, Activity>();
+
+function freshActivity(): Activity {
+  return { edited: new Set(), read: new Set(), commands: 0, searches: 0 };
+}
+
+function tally(agentId: string, tool: string, input: Record<string, unknown>) {
+  const a = activity.get(agentId) ?? freshActivity();
+  activity.set(agentId, a);
+  const file =
+    typeof input.file_path === "string" ? input.file_path : typeof input.path === "string" ? input.path : null;
+  switch (tool) {
+    case "Edit":
+    case "MultiEdit":
+    case "Write":
+    case "NotebookEdit":
+      a.edited.add(file ?? `#${a.edited.size}`);
+      break;
+    case "Read":
+      a.read.add(file ?? `#${a.read.size}`);
+      break;
+    case "Bash":
+    case "PowerShell":
+      a.commands++;
+      break;
+    case "Grep":
+    case "Glob":
+    case "WebSearch":
+    case "WebFetch":
+      a.searches++;
+      break;
+  }
+}
+
+/** "Edited 3 files · ran 5 commands" — null when nothing worth saying happened. */
+function summarize(a: Activity | undefined): string | null {
+  if (!a) return null;
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  const parts: string[] = [];
+  if (a.edited.size) parts.push(`edited ${n(a.edited.size, "file", "files")}`);
+  if (a.commands) parts.push(`ran ${n(a.commands, "command", "commands")}`);
+  if (a.read.size) parts.push(`read ${n(a.read.size, "file", "files")}`);
+  if (a.searches) parts.push(`${n(a.searches, "search", "searches")}`);
+  if (parts.length === 0) return null;
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
   const label = TOOL_LABELS[tool] ?? tool;
@@ -212,6 +268,8 @@ function handleHook(island: Island, payload: HookPayload) {
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
+      activity.set(agentId, freshActivity());
+      State.patchTask(agentId, { summary: null, lastPrompt: asked ? asked.trim().replace(/\s+/g, " ").slice(0, 90) : null });
       surface("overview", false);
       break;
     }
@@ -221,6 +279,7 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
       State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
+      tally(agentId, tool, payload.tool_input ?? {});
       surface("overview", false);
       break;
     }
@@ -249,6 +308,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "Stop":
       State.updateTask(agentId, "finished");
+      State.patchTask(agentId, { summary: summarize(activity.get(agentId)) });
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
       if (focused) surface("finished", true);

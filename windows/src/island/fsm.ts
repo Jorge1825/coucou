@@ -19,6 +19,13 @@ export class IslandStateMachine {
   /** An alert waiting for an answer stays open, even when the mouse leaves. */
   pinned = false;
 
+  /**
+   * Told whenever the home → petit countdown starts (with the `performance.now()`
+   * moment the island will close) or stops (null). The UI draws its countdown bar
+   * from this, so it can never disagree with what the island actually does.
+   */
+  onHomeCollapseTimer: ((deadlineMs: number | null) => void) | null = null;
+
   private petitHide: number | null = null;
   private homeCollapse: number | null = null;
   private greetCollapse: number | null = null;
@@ -117,8 +124,10 @@ export class IslandStateMachine {
     if (this.pinned) return;
     this.homeCollapse = window.setTimeout(() => {
       this.homeCollapse = null;
+      this.onHomeCollapseTimer?.(null);
       if (this.state === "home") this.transition("petit");
     }, this.homeToPetitDelay * 1000);
+    this.onHomeCollapseTimer?.(performance.now() + this.homeToPetitDelay * 1000);
   }
 
   private scheduleGreetCollapse(delay: number) {
@@ -133,6 +142,7 @@ export class IslandStateMachine {
     const id = this[which];
     if (id != null) window.clearTimeout(id);
     this[which] = null;
+    if (which === "homeCollapse") this.onHomeCollapseTimer?.(null);
   }
 
   cancelTimers() {

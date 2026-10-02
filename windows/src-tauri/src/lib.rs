@@ -1,8 +1,10 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
 mod claude;
+mod context;
 mod files;
 mod hooks;
+mod hotkey;
 mod integrations;
 mod island;
 mod log;
@@ -284,6 +286,22 @@ fn hooks_apply(
 }
 
 /// One screenshot of the calling island's display, only when the user asks for it.
+/// Changes the shortcut that opens the chat. Empty removes it. The new one is
+/// only saved if Windows accepted it, so a refused combination never sticks.
+#[tauri::command]
+fn set_chat_hotkey(app: AppHandle, shared: State<Shared>, combo: String) -> Result<String, String> {
+    let canonical = hotkey::set(&combo)?;
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        current.chat_hotkey = canonical.clone();
+        let _ = settings::save(&current);
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
+    Ok(canonical)
+}
+
+/// One screenshot of the island's display, only when the user asks for it.
 #[tauri::command]
 async fn capture_screen(app: AppHandle, window: WebviewWindow) -> Result<DroppedFile, String> {
     let iw = caller(&window).ok_or("No screen to capture.")?;
@@ -475,6 +493,8 @@ fn create_settings_window(app: &AppHandle) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = hidden.hide();
+                    // Lets the page stop its animation loop while nobody can see it.
+                    let _ = hidden.emit("settings-visible", false);
                 }
             });
         }
@@ -490,6 +510,7 @@ pub fn show_settings_window(app: &AppHandle) {
     let _ = win.unminimize();
     let _ = win.show();
     let _ = win.set_focus();
+    let _ = win.emit("settings-visible", true);
 }
 
 #[tauri::command]
@@ -578,6 +599,7 @@ pub fn run() {
             ingest_file,
             pick_file,
             capture_screen,
+            set_chat_hotkey,
             secret_present,
             secret_set,
             secret_clear,
@@ -610,6 +632,7 @@ pub fn run() {
             island::load_positions(&handle);
             island::assign_monitors(&handle);
             island::schedule_unblock_drops(&handle);
+            hotkey::start(handle.clone(), &loaded.chat_hotkey);
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);

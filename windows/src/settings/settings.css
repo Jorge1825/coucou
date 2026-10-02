@@ -195,6 +195,7 @@ input[type="range"]::-webkit-slider-thumb {
 input[type="number"],
 input[type="text"],
 input[type="password"],
+input[type="search"],
 select {
   font: 400 12.5px var(--font);
   background: rgba(255, 255, 255, 0.07);
@@ -369,4 +370,92 @@ button.chip.on {
   flex: 0 0 auto;
   color: var(--dim);
   font-size: 11px;
+}
+
+.shortcut {
+  min-width: 120px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  font: 500 12.5px var(--font);
+}
+
+.shortcut:focus-visible {
+  outline: 2px solid var(--green);
+}
+
+/* ── Integrations: compact, collapsible list ───────────────────────────── */
+
+.int-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 2px 0 8px;
+}
+
+.int-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.int-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.int-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: default;
+  user-select: none;
+}
+
+.int-head:focus-visible {
+  outline: 2px solid var(--green);
+  border-radius: 10px;
+}
+
+.int-title {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+}
+
+.int-status {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.int-status.ok {
+  color: var(--green);
+}
+
+.int-chevron {
+  color: var(--dim);
+  transition: transform 0.15s ease-out;
+}
+
+.int-item.open .int-chevron {
+  transform: rotate(90deg);
+}
+
+.int-body {
+  display: none;
+  padding: 2px 10px 10px;
+}
+
+.int-item.open .int-body {
+  display: block;
+}
+
+.int-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

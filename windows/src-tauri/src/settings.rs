@@ -66,6 +66,13 @@ fn default_one() -> f64 {
 
 fn default_true() -> bool {
     true
+    /// Global shortcut that opens the chat; empty = none.
+    #[serde(default = "default_chat_hotkey")]
+    pub chat_hotkey: String,
+}
+
+fn default_chat_hotkey() -> String {
+    crate::hotkey::DEFAULT.into()
 }
 
 fn default_proactive_minutes() -> u32 {
@@ -117,6 +124,7 @@ impl Default for Settings {
             island_opacity: 1.0,
             card_opacity: 1.0,
             idle_opacity: 1.0,
+            chat_hotkey: default_chat_hotkey(),
         }
     }
 }

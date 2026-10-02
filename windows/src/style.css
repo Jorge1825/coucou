@@ -293,6 +293,18 @@ body {
   transition: opacity 0.3s ease-out 0.16s, transform 0.3s cubic-bezier(0.3, 1.2, 0.4, 1) 0.16s;
 }
 
+/* Infinite animations (shimmer, dash-march, typing, pulse) keep the style engine
+   and the GPU busy even at opacity 0. Freeze everything that can't be seen: the
+   whole island while retracted, and every view that isn't the current one. */
+#content.paused *,
+#content.paused *::before,
+#content.paused *::after,
+.view:not(.on) *,
+.view:not(.on) *::before,
+.view:not(.on) *::after {
+  animation-play-state: paused !important;
+}
+
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
 .card {
@@ -409,6 +421,15 @@ body {
 
 .overview > .right {
   flex: 1 1 auto;
+}
+
+.overview.solo > .left {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.overview.solo > .right {
+  display: none;
 }
 
 .card-body {

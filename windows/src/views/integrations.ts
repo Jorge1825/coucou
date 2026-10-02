@@ -52,6 +52,7 @@ const OPEN_URLS: Record<string, string> = {
   integration_github: "https://github.com",
   integration_stripe: "https://dashboard.stripe.com/payments",
   integration_notion: "https://notion.so",
+  integration_linear: "https://linear.app",
   integration_calcom: "https://app.cal.com/bookings",
 };
 
@@ -290,6 +291,37 @@ function notionCard(): HTMLElement {
   return h("div", { class: "int-card" }, header("#E8E8E8", "Notion", "Recent"), rows);
 }
 
+// ── Linear ────────────────────────────────────────────────────────────────────
+
+function linearCard(): HTMLElement {
+  const rows = h("div", { class: "int-rows tight" });
+  const issues = arr("integration_linear", "issues").slice(0, 3);
+  for (const i of issues) {
+    // The colour comes from the API: only ever use it if it is a plain hex value.
+    const color =
+      typeof i.stateColor === "string" && /^#[0-9a-fA-F]{3,8}$/.test(i.stateColor) ? i.stateColor : "#8A8F98";
+    rows.append(
+      h(
+        "button",
+        {
+          class: "int-page",
+          title: String(i.state ?? ""),
+          onclick: () => {
+            if (typeof i.url === "string") void Bridge.openUrl(i.url);
+          },
+        },
+        h("span", { class: "int-emoji", text: "●", style: `color:${color}` }),
+        h("span", { class: "int-name", text: `${i.id} ${i.title ?? ""}` }),
+        h("span", { class: "int-ago", text: timeAgo(i.updatedAt) }),
+      ),
+    );
+  }
+  if (issues.length === 0) {
+    rows.append(h("div", { class: "int-ago", text: "Nothing assigned to you" }));
+  }
+  return h("div", { class: "int-card" }, header("#5E6AD2", "Linear", "Assigned"), rows);
+}
+
 // ── Cal.com ───────────────────────────────────────────────────────────────────
 
 function calcomCard(): HTMLElement {
@@ -478,6 +510,8 @@ export function hasIntegrationData(id: string): boolean {
       return info.loaded;
     case "integration_notion":
       return arr(id, "pages").length > 0;
+    case "integration_linear":
+      return info.loaded;
     case "integration_calcom":
       return info.loaded;
     default:
@@ -507,6 +541,8 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
       return stripeCard();
     case "integration_notion":
       return notionCard();
+    case "integration_linear":
+      return linearCard();
     case "integration_calcom":
       return calcomCard();
     default:

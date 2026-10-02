@@ -23,7 +23,7 @@ use windows::core::BOOL;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::System::Ole::RevokeDragDrop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW, GetPropW};
+use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
@@ -524,21 +524,8 @@ unsafe extern "system" fn revoke_render_widget(hwnd: HWND, _: LPARAM) -> BOOL {
     let len = unsafe { GetClassNameW(hwnd, &mut name) };
     if len > 0 {
         let class = String::from_utf16_lossy(&name[..len as usize]);
-        let revoked = if class == "Chrome_RenderWidgetHostHWND" {
-            Some(unsafe { RevokeDragDrop(hwnd) })
-        } else {
-            None
-        };
-        // TEMP diagnostics: first few passes only.
-        static PASSES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        if PASSES.fetch_add(1, Ordering::Relaxed) < 40 {
-            let has_target =
-                !unsafe { GetPropW(hwnd, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
-            crate::log::line(format!(
-                "dnd-diag child {:?} class={class} ole_target={has_target} revoke_ok={:?}",
-                hwnd.0,
-                revoked.map(|r| r.is_ok())
-            ));
+        if class == "Chrome_RenderWidgetHostHWND" {
+            let _ = unsafe { RevokeDragDrop(hwnd) };
         }
     }
     true.into()
@@ -557,26 +544,6 @@ pub fn schedule_unblock_drops(app: &AppHandle) {
             let _ = handle.run_on_main_thread(move || unblock_webview_drops(&h));
         }
     });
-}
-
-/// TEMP diagnostics: logs the window under the cursor and its parents, with
-/// whether each has an OLE drop target registered.
-fn log_hit_chain(cx: f64, cy: f64) {
-    use windows::Win32::UI::WindowsAndMessaging::{GetParent, WindowFromPoint};
-    let mut cur = unsafe { WindowFromPoint(POINT { x: cx as i32, y: cy as i32 }) };
-    let mut out = String::new();
-    for _ in 0..8 {
-        if cur.0.is_null() {
-            break;
-        }
-        let mut name = [0u16; 64];
-        let len = unsafe { GetClassNameW(cur, &mut name) };
-        let class = String::from_utf16_lossy(&name[..len.max(0) as usize]);
-        let target = !unsafe { GetPropW(cur, windows::core::w!("OleDropTargetInterface")) }.0.is_null();
-        out.push_str(&format!(" > {class}[target={target}]"));
-        cur = unsafe { GetParent(cur) }.unwrap_or_default();
-    }
-    crate::log::line(format!("dnd-diag hit chain:{out}"));
 }
 
 /// True while the left mouse button is held — the only signal we get that a
@@ -735,17 +702,10 @@ pub fn pick_file(owner: Option<WebviewWindow>) -> Option<String> {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let path = (|| -> Option<String> {
             let dialog: IFileOpenDialog =
-                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)
-                    .map_err(|e| crate::log::line(format!("pick: cannot create dialog: {e}")))
-                    .ok()?;
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
             let options = dialog.GetOptions().ok()?;
             dialog.SetOptions(options | FOS_FORCEFILESYSTEM).ok()?;
-            crate::log::line("pick: showing dialog");
-            // Err on cancel (HRESULT_FROM_WIN32(ERROR_CANCELLED)).
-            dialog
-                .Show(owner)
-                .map_err(|e| crate::log::line(format!("pick: dialog returned {e}")))
-                .ok()?;
+            dialog.Show(owner).ok()?; // Err on cancel
             let item = dialog.GetResult().ok()?;
             let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
             let path = name.to_string().ok();
@@ -811,6 +771,9 @@ pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
     std::thread::spawn(move || {
         let mut was_down = false;
         let mut was_dragging = false;
+        // Remembered across wakes so a display change while hidden is noticed the
+        // moment the island comes back.
+        let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
         loop {
             gate.wait_until_active();
             let mut last = (f64::MIN, f64::MIN);
@@ -885,12 +848,6 @@ pub fn spawn_cursor_poll(app: AppHandle, iw: Arc<IslandWin>) {
                     && x <= size.0
                     && y >= 0.0
                     && y <= size.1;
-
-                // TEMP diagnostics: what window would OLE hit under the cursor?
-                if dragging && !was_dragging {
-                    log_hit_chain(cx, cy);
-                }
-                was_dragging = dragging;
 
                 let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {

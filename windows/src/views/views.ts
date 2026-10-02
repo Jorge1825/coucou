@@ -225,6 +225,9 @@ function buildOverview(actions: ViewActions): ViewHost {
       jump.style.display = detailOpen ? "none" : "";
 
       const others = State.otherTasks.slice(0, 4);
+      // With no other integration to show, an empty right-hand card is just noise:
+      // drop it and let the main card use the whole width.
+      el.classList.toggle("solo", others.length === 0);
       const pillKey = others.map((t) => `${t.id}:${t.pillBadge ?? ""}`).join("|");
       if (pillKey !== pillIds) {
         pillIds = pillKey;
@@ -375,17 +378,22 @@ function buildError(actions: ViewActions): ViewHost {
 function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title" });
+  const asked = h("div", { class: "sub", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" });
   const row = h("div", { class: "actions" },
     btn("Open terminal", "primary", () => actions.openTerminal()),
     btn("OK", "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, row)));
+  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, asked, row)));
   return {
     el,
     sync() {
+      const task = State.focusTask;
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code finished"));
-      title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
+      who.append(agentWho(task, "Claude Code finished"));
+      // What it did, not just the last thing it touched; and what it was for.
+      title.textContent = task?.summary ?? task?.steps.at(-1) ?? "Session finished";
+      asked.textContent = task?.lastPrompt ? `For: “${task.lastPrompt}”` : "";
+      asked.style.display = task?.lastPrompt ? "" : "none";
     },
   };
 }

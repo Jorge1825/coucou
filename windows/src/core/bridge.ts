@@ -117,6 +117,8 @@ export const Bridge = {
   memoryClear: () => call<void>("memory_clear"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  /** Registers the global chat shortcut. Rejects with the reason if Windows refuses it. */
+  setChatHotkey: (combo: string) => callOrThrow<string>("set_chat_hotkey", { combo }),
   /** One screenshot, taken right now because the user pressed the eye button. */
   captureScreen: () => callOrThrow<DroppedFile>("capture_screen"),
   /** Native "open file" dialog. Resolves with the chosen path, or null if cancelled. */

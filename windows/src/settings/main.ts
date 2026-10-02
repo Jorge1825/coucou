@@ -3,7 +3,7 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus } from "../core/bridge";
+import { Bridge, IS_TAURI, onEvent, type HookStatus } from "../core/bridge";
 import { PROVIDERS, providerDef } from "../core/providers";
 import { DEFAULT_SETTINGS, OPACITY_MIN, clampOpacity, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
@@ -361,6 +361,8 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "resend-api-key", label: "API key", placeholder: "re_…", secret: true }] },
   { id: "integration_notion", name: "Notion", color: "#8C8C8C",
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
+  { id: "integration_linear", name: "Linear", color: "#5E6AD2",
+    fields: [{ key: "linear-api-key", label: "Personal API key", placeholder: "lin_api_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
 ];
@@ -369,7 +371,22 @@ const MAX_ACTIVE = 4;
 
 function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const note = h("div", { class: "hint" });
-  const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
+  const list = h("div", { class: "int-list" });
+  // One entry per integration: a compact header row that unfolds its key fields.
+  // Only one is open at a time and the list scrolls inside a fixed height, so the
+  // page doesn't grow with every integration that gets added.
+  const items: { name: string; el: HTMLElement }[] = [];
+  const search = h("input", {
+    type: "search",
+    class: "int-search",
+    placeholder: "Search integrations…",
+    spellcheck: "false",
+    autocomplete: "off",
+  }) as HTMLInputElement;
+  search.addEventListener("input", () => {
+    const q = search.value.trim().toLowerCase();
+    for (const item of items) item.el.hidden = q !== "" && !item.name.toLowerCase().includes(q);
+  });
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
@@ -392,7 +409,15 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       void save();
     });
 
-    const rows = h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-width:0" });
+    const status = h("span", { class: "int-status" });
+    const refreshStatus = () => {
+      const ready = def.fields.every((f) => present[f.key]);
+      status.textContent = ready ? "Key stored" : "Not set up";
+      status.classList.toggle("ok", ready);
+    };
+    refreshStatus();
+
+    const rows = h("div", { class: "int-fields" });
     for (const field of def.fields) {
       const input = h("input", {
         type: field.secret ? "password" : "text",
@@ -408,6 +433,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
         try {
           await Bridge.secretSet(field.key, value);
           present[field.key] = value.length > 0;
+          refreshStatus();
           input.value = "";
           input.placeholder = value ? "••••••••  (stored)" : field.placeholder;
           dotEl.style.background = value ? "#22c55e" : "#f4505e";
@@ -423,20 +449,35 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       );
     }
 
-    list.append(
-      h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
-        h("div", { style: "display:flex;align-items:center;gap:8px;min-width:132px;padding-top:4px" },
-          sw,
-          h("i", { class: "dot", style: `background:${def.color}` }),
-          h("span", { style: "font-size:12.5px", text: def.name }),
-        ),
-        rows,
-      ),
+    const head = h("div", { class: "int-head", role: "button", tabindex: "0" },
+      sw,
+      h("i", { class: "dot", style: `background:${def.color}` }),
+      h("span", { class: "int-title", text: def.name }),
+      status,
+      h("span", { class: "int-chevron", text: "\u203a" }),
     );
+    const item = h("div", { class: "int-item" }, head, h("div", { class: "int-body" }, rows));
+    const toggleOpen = () => {
+      const opening = !item.classList.contains("open");
+      for (const other of items) other.el.classList.remove("open");
+      item.classList.toggle("open", opening);
+    };
+    head.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".switch")) return; // the switch only switches
+      toggleOpen();
+    });
+    head.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
+        e.preventDefault();
+        toggleOpen();
+      }
+    });
+    items.push({ name: def.name, el: item });
+    list.append(item);
   }
 
   updateNote();
-  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
+  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, search, list);
 }
 
 // ── Transparency section ──────────────────────────────────────────────────────
@@ -531,6 +572,71 @@ function transparencySection(): HTMLElement {
 
 // ── General section ───────────────────────────────────────────────────────────
 
+/** Turns a keydown into "Ctrl+Alt+M" (null while only modifiers are held). */
+function comboFromEvent(e: KeyboardEvent): string | null {
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+  else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(e.code)) key = e.code;
+  else if (e.code === "Space") key = "Space";
+  else if (e.code === "Enter") key = "Enter";
+  else if (e.code === "Tab") key = "Tab";
+  if (!key) return null;
+  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Win"].filter(Boolean);
+  return [...mods, key].join("+");
+}
+
+/** "Open chat shortcut": click, press the combination; Backspace removes it, Esc cancels. */
+function shortcutRow(): HTMLElement {
+  const button = h("button", { class: "shortcut" }) as HTMLButtonElement;
+  const note = h("span", { class: "hint" });
+  const show = () => { button.textContent = settings.chatHotkey || "None"; };
+  show();
+
+  let listening = false;
+  const stop = () => {
+    listening = false;
+    window.removeEventListener("keydown", onKey, true);
+    show();
+  };
+  const apply = async (combo: string) => {
+    try {
+      settings.chatHotkey = await Bridge.setChatHotkey(combo);
+      note.textContent = combo ? "Saved." : "Shortcut removed.";
+    } catch (err) {
+      note.textContent = String(err).replace(/^Error:\s*/, "");
+    }
+  };
+  function onKey(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") return stop();
+    if (e.key === "Backspace" || e.key === "Delete") {
+      stop();
+      void apply("").then(show);
+      return;
+    }
+    const combo = comboFromEvent(e);
+    if (!combo) return; // only modifiers so far
+    if (!(e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)) {
+      note.textContent = "Hold Ctrl, Alt, Shift or Win together with the key.";
+      return;
+    }
+    stop();
+    void apply(combo).then(show);
+  }
+  button.addEventListener("click", () => {
+    if (listening) return stop();
+    listening = true;
+    button.textContent = "Press the keys…";
+    note.textContent = "Backspace removes it, Esc cancels.";
+    window.addEventListener("keydown", onKey, true);
+  });
+  button.addEventListener("blur", () => { if (listening) stop(); });
+
+  return h("div", { class: "row" }, h("label", { text: "Open chat shortcut" }), button, note);
+}
+
 function generalSection(): HTMLElement {
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
@@ -583,6 +689,7 @@ function generalSection(): HTMLElement {
       h("label", { text: "Island lives on" }),
       screen,
     ),
+    shortcutRow(),
     h("div", { class: "row" },
       h("label", { text: "Launch at startup" }),
       toggle(settings.autostart, (v) => { settings.autostart = v; void save(); }),
@@ -619,7 +726,12 @@ function mochiSection(): HTMLElement {
   };
   applyLook();
 
+  // The preview only animates while this window is actually on screen. The window
+  // is created hidden at launch and merely hidden when closed, and WebView2 keeps
+  // running animation frames for a hidden window — so Rust says when it is shown.
   let last = performance.now();
+  let shown = !IS_TAURI;
+  let looping = false;
   const frame = (t: number) => {
     const ctx = canvas.getContext("2d");
     if (ctx) {
@@ -629,9 +741,21 @@ function mochiSection(): HTMLElement {
       engine.draw(ctx, SIZE, SIZE);
     }
     last = t;
+    if (shown && !document.hidden) requestAnimationFrame(frame);
+    else looping = false;
+  };
+  const wake = () => {
+    if (looping || !shown || document.hidden) return;
+    looping = true;
+    last = performance.now();
     requestAnimationFrame(frame);
   };
-  requestAnimationFrame(frame);
+  document.addEventListener("visibilitychange", wake);
+  void onEvent<boolean>("settings-visible", (v) => {
+    shown = v;
+    wake();
+  });
+  wake();
 
   function picker<T extends string>(
     options: { id: T; label: string }[],
@@ -852,7 +976,7 @@ async function main() {
     "anthropic-api-key", "openai-api-key", "openrouter-api-key",
     "groq-api-key", "deepseek-api-key", "custom-api-key",
     "stripe-api-key", "github-token", "vercel-token",
-    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key",
+    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "linear-api-key", "calcom-api-key",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
