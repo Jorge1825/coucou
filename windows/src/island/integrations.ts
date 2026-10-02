@@ -15,6 +15,7 @@ const KEY_FOR: Record<string, string> = {
   integration_n8n: "n8n-api-key",
   integration_resend: "resend-api-key",
   integration_notion: "notion-api-key",
+  integration_linear: "linear-api-key",
   integration_calcom: "calcom-api-key",
 };
 
