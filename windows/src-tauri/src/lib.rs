@@ -332,6 +332,12 @@ fn memory_clear() -> Result<(), String> {
     memory::clear()
 }
 
+/// The user pressed stop: abandon the request in flight.
+#[tauri::command]
+fn chat_cancel(chat: State<Chat>) {
+    chat.cancel();
+}
+
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();

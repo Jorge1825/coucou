@@ -79,8 +79,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
       Sound.play("finish");
+      // Mochi saved a note or set a reminder: let the island animate it.
+      if (reply.remembered) window.dispatchEvent(new CustomEvent("mochi-remembered"));
     } catch (err) {
       State.stateOverride = null;
+      if (String(err).includes("cancelled")) {
+        // Stopped by the user: take the question back so it can be edited or resent.
+        State.chatHistory.pop();
+        input.value = query;
+        return;
+      }
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
       Sound.play("error");
@@ -89,10 +97,15 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       State.notify();
       onHeightChange();
       input.focus();
+      requestAnimationFrame(() => input.focus());
     }
   }
 
-  send.addEventListener("click", () => void submit());
+  send.addEventListener("click", () => {
+    // While a request is in flight the button is a stop button.
+    if (sending) void Bridge.chatCancel();
+    else void submit();
+  });
   input.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") {
       e.preventDefault();
@@ -123,7 +136,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       }
 
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
-      input.disabled = sending;
+      // readOnly, not disabled: disabling the field drops its focus, and the user
+      // would have to click it again after every message.
+      input.readOnly = sending;
+      send.title = sending ? "Stop" : "Send";
+      send.classList.toggle("stop", sending);
+      if (send.dataset.icon !== (sending ? "stop" : "send")) {
+        send.dataset.icon = sending ? "stop" : "send";
+        clear(send);
+        send.append(svg(sending ? ICONS.stop : ICONS.arrowUp, 11));
+      }
     },
     focus() {
       input.focus();
