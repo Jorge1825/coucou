@@ -1,11 +1,11 @@
 // The island: DOM shell, sizing animation, Mochi placement, mouse handling.
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
-import { Tracked, Spring, clamp } from "../core/anim";
+import { Tracked, Spring } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
-  ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
+  ROUNDED_CORNER, VIEW_LAYOUTS, type BotEmoteName, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
   islandSize, VERTICAL_W,
   type IslandMode, type IslandViewName,
 } from "../core/layout";
@@ -24,6 +24,12 @@ import { IslandStateMachine } from "./fsm";
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
+
+/** Width of the auto-close bar when full, px. */
+const COUNTDOWN_WIDTH = 160;
+
+/** Idle time before Mochi yawns. */
+const YAWN_AFTER_MS = 60_000;
 
 /** Characters in the last exchange: what decides whether the chat card needs more height. */
 function chatChars(): number {
@@ -79,7 +85,7 @@ export class Island {
   private wasInIsland = false;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
-  private homeCollapseAt: number | null = null;
+  private countdownTimer: number | null = null;
 
   // Bot hover → love (IslandWindowController.botHoverIn)
   private botHovering = false;
@@ -132,6 +138,7 @@ export class Island {
           integration_github: "https://github.com",
           integration_stripe: "https://dashboard.stripe.com/payments",
           integration_notion: "https://notion.so",
+          integration_linear: "https://linear.app",
           integration_calcom: "https://app.cal.com/bookings",
         };
         if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
@@ -146,6 +153,7 @@ export class Island {
         void Bridge.log(`decide ${d} req=${req?.requestId ?? "none"}`);
         if (!req) return;
         Sound.play(d === "deny" ? "blip" : "approve");
+        if (d === "allow") window.setTimeout(() => this.react("proud"), 250);
         void Bridge.approvalDecision(req.requestId, d);
         State.pendingApproval = null;
         State.isPinned = false;
@@ -307,7 +315,6 @@ export class Island {
     if (State.mode !== "expanded") this.setMode("expanded");
     else this.animateGeometry(false);
     State.lastActivity = performance.now();
-    this.homeCollapseAt = null;
     State.notify();
   }
 
@@ -397,16 +404,21 @@ export class Island {
     }
   }
 
+  /** A reaction with one of Mochi's emotes — only worth the frames while it can be seen. */
+  react(emote: BotEmoteName, duration?: number) {
+    if (State.paused || State.mode === "hidden") return;
+    this.engine.triggerEmote(emote, duration);
+    this.ensureRunning();
+  }
+
   /** Click on the drop zone: choose a file with the system dialog. */
   private async pickFile() {
-    void Bridge.log(`pick: click (paused=${State.paused}, busy=${this.pickingFile})`);
     if (State.paused || this.pickingFile) return;
     this.pickingFile = true;
     // The dialog takes focus away; without the pin the island would auto-close.
     this.fsm.pinned = true;
     try {
       const path = await Bridge.pickFile();
-      void Bridge.log(`pick: dialog closed, chosen=${path ? "yes" : "no"}`);
       if (path) this.swallow(path);
     } finally {
       this.pickingFile = false;
@@ -647,6 +659,27 @@ export class Island {
       State.lastActivity = performance.now();
     });
 
+    this.fsm.onHomeCollapseTimer = (deadline) => this.syncCountdown(deadline);
+
+    // The chat (or anything else) asking Mochi to show a feeling.
+    window.addEventListener("mochi-react", (e) => {
+      this.react((e as CustomEvent<BotEmoteName>).detail);
+    });
+
+    // After a minute with nobody around, Mochi yawns once; it only yawns again
+    // after being touched. A 15 s tick is the whole cost of it.
+    let yawned = false;
+    window.setInterval(() => {
+      if (State.mode === "hidden" || State.paused || State.view === "greeting") return;
+      if (performance.now() - State.lastActivity < YAWN_AFTER_MS) {
+        yawned = false;
+        return;
+      }
+      if (yawned) return;
+      yawned = true;
+      this.react("yawn", 2.4);
+    }, 15000);
+
     window.addEventListener("mochi-remembered", () => {
       Sound.play("approve");
       this.engine.triggerEmote("remember");
@@ -716,13 +749,9 @@ export class Island {
     if (inIsland && !this.wasInIsland) {
       if (this.fsm.state === "coucou") this.greeting.hover();
       this.fsm.mouseEntered();
-      this.homeCollapseAt = null;
     }
     if (!inIsland && this.wasInIsland) {
       this.fsm.mouseLeft();
-      if (this.fsm.state === "home" && !State.isPinned) {
-        this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
-      }
     }
     this.wasInIsland = inIsland;
 
@@ -853,7 +882,6 @@ export class Island {
     tickMiniBots(dt);
     this.views.get(State.view)?.tick?.(nowMs);
     if (UploadSeq.isActive) this.stepSequence();
-    this.updateCountdown(nowMs);
 
     // Nothing is drawn while the island is hidden, so nothing may keep the loop
     // alive either. This used to read `... || this.engine.busy || State.mode !==
@@ -957,16 +985,35 @@ export class Island {
     return -Math.tanh((State.mouse.y - this.botCy.value) / 200);
   }
 
-  private updateCountdown(nowMs: number) {
-    if (State.mode !== "expanded" || State.isPinned || this.homeCollapseAt == null) {
-      this.countdown.style.width = "0px";
-      return;
+  /**
+   * The bar that shrinks before the island closes by itself. It follows the
+   * state machine's own timer (`deadline`), so it appears for every auto-close —
+   * alerts included, not only after the cursor left — and it is a CSS transition,
+   * so it keeps moving while the frame loop sleeps and costs no frames.
+   */
+  private syncCountdown(deadline: number | null) {
+    if (this.countdownTimer != null) {
+      window.clearTimeout(this.countdownTimer);
+      this.countdownTimer = null;
     }
-    const autoClose = State.settings.autoCloseInterval;
-    const windowS = Math.min(10, autoClose * 0.6);
-    const remaining = (this.homeCollapseAt - nowMs) / 1000;
-    this.countdown.style.width =
-      remaining < windowS ? `${Math.max(0, clamp(remaining / windowS, 0, 1) * 160)}px` : "0px";
+    const bar = this.countdown;
+    bar.style.transition = "none";
+    bar.style.width = "0px";
+    if (deadline == null) return;
+
+    const windowMs = Math.min(10, State.settings.autoCloseInterval * 0.6) * 1000;
+    const start = () => {
+      this.countdownTimer = null;
+      const left = deadline - performance.now();
+      if (left <= 0) return;
+      bar.style.width = `${COUNTDOWN_WIDTH * Math.min(1, left / windowMs)}px`;
+      void bar.offsetWidth; // commit the starting width before animating from it
+      bar.style.transition = `width ${left}ms linear`;
+      bar.style.width = "0px";
+    };
+    const wait = deadline - performance.now() - windowMs;
+    if (wait <= 0) start();
+    else this.countdownTimer = window.setTimeout(start, wait);
   }
 
   // ── DOM sync ────────────────────────────────────────────────────────────────

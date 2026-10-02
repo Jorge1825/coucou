@@ -5,6 +5,7 @@ import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
+import { moodOf } from "../mochi/mood";
 import { State, type ChatMessage } from "../core/state";
 import type { ViewHost } from "./views";
 
@@ -92,6 +93,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       Sound.play("finish");
       // Mochi saved a note or set a reminder: let the island animate it.
       if (reply.remembered) window.dispatchEvent(new CustomEvent("mochi-remembered"));
+      else {
+        const mood = moodOf(query, reply.text);
+        if (mood) window.dispatchEvent(new CustomEvent("mochi-react", { detail: mood }));
+      }
     } catch (err) {
       State.stateOverride = null;
       if (String(err).includes("cancelled")) {

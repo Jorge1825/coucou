@@ -361,6 +361,8 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "resend-api-key", label: "API key", placeholder: "re_…", secret: true }] },
   { id: "integration_notion", name: "Notion", color: "#8C8C8C",
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
+  { id: "integration_linear", name: "Linear", color: "#5E6AD2",
+    fields: [{ key: "linear-api-key", label: "Personal API key", placeholder: "lin_api_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
 ];
@@ -369,7 +371,22 @@ const MAX_ACTIVE = 4;
 
 function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const note = h("div", { class: "hint" });
-  const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
+  const list = h("div", { class: "int-list" });
+  // One entry per integration: a compact header row that unfolds its key fields.
+  // Only one is open at a time and the list scrolls inside a fixed height, so the
+  // page doesn't grow with every integration that gets added.
+  const items: { name: string; el: HTMLElement }[] = [];
+  const search = h("input", {
+    type: "search",
+    class: "int-search",
+    placeholder: "Search integrations…",
+    spellcheck: "false",
+    autocomplete: "off",
+  }) as HTMLInputElement;
+  search.addEventListener("input", () => {
+    const q = search.value.trim().toLowerCase();
+    for (const item of items) item.el.hidden = q !== "" && !item.name.toLowerCase().includes(q);
+  });
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
@@ -392,7 +409,15 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       void save();
     });
 
-    const rows = h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-width:0" });
+    const status = h("span", { class: "int-status" });
+    const refreshStatus = () => {
+      const ready = def.fields.every((f) => present[f.key]);
+      status.textContent = ready ? "Key stored" : "Not set up";
+      status.classList.toggle("ok", ready);
+    };
+    refreshStatus();
+
+    const rows = h("div", { class: "int-fields" });
     for (const field of def.fields) {
       const input = h("input", {
         type: field.secret ? "password" : "text",
@@ -408,6 +433,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
         try {
           await Bridge.secretSet(field.key, value);
           present[field.key] = value.length > 0;
+          refreshStatus();
           input.value = "";
           input.placeholder = value ? "••••••••  (stored)" : field.placeholder;
           dotEl.style.background = value ? "#22c55e" : "#f4505e";
@@ -423,20 +449,35 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       );
     }
 
-    list.append(
-      h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
-        h("div", { style: "display:flex;align-items:center;gap:8px;min-width:132px;padding-top:4px" },
-          sw,
-          h("i", { class: "dot", style: `background:${def.color}` }),
-          h("span", { style: "font-size:12.5px", text: def.name }),
-        ),
-        rows,
-      ),
+    const head = h("div", { class: "int-head", role: "button", tabindex: "0" },
+      sw,
+      h("i", { class: "dot", style: `background:${def.color}` }),
+      h("span", { class: "int-title", text: def.name }),
+      status,
+      h("span", { class: "int-chevron", text: "\u203a" }),
     );
+    const item = h("div", { class: "int-item" }, head, h("div", { class: "int-body" }, rows));
+    const toggleOpen = () => {
+      const opening = !item.classList.contains("open");
+      for (const other of items) other.el.classList.remove("open");
+      item.classList.toggle("open", opening);
+    };
+    head.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest(".switch")) return; // the switch only switches
+      toggleOpen();
+    });
+    head.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Enter" || (e as KeyboardEvent).key === " ") {
+        e.preventDefault();
+        toggleOpen();
+      }
+    });
+    items.push({ name: def.name, el: item });
+    list.append(item);
   }
 
   updateNote();
-  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
+  return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, search, list);
 }
 
 // ── General section ───────────────────────────────────────────────────────────
@@ -837,7 +878,7 @@ async function main() {
     "anthropic-api-key", "openai-api-key", "openrouter-api-key",
     "groq-api-key", "deepseek-api-key", "custom-api-key",
     "stripe-api-key", "github-token", "vercel-token",
-    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key",
+    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "linear-api-key", "calcom-api-key",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;

@@ -80,7 +80,7 @@ async function main() {
 
   // Mochi speaking up on its own: a reminder coming due, or a check-in worth
   // an interruption. Shown even when no window of ours is in the foreground.
-  await onEvent<{ text: string; kind: string }>("nudge", ({ text }) => {
+  await onEvent<{ text: string; kind: string }>("nudge", ({ text, kind }) => {
     if (State.paused) return;
     State.noteMessage = text;
     // The attention chime the approvals use: a reminder has to be heard.
@@ -90,6 +90,8 @@ async function main() {
     island.attention();
     // Let it close by itself if the user never comes near it.
     island.fsm.mouseLeft();
+    // A reminder startles; a check-in of its own is said with a wink.
+    window.setTimeout(() => island.react(kind === "reminder" ? "surprised" : "wink"), 450);
   });
 
   // Dragging the island back and forth makes Mochi dizzy.
