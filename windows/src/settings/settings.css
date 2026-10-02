@@ -370,3 +370,16 @@ button.chip.on {
   color: var(--dim);
   font-size: 11px;
 }
+
+.shortcut {
+  min-width: 120px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  font: 500 12.5px var(--font);
+}
+
+.shortcut:focus-visible {
+  outline: 2px solid var(--green);
+}

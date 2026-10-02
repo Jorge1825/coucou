@@ -975,6 +975,8 @@ export class Island {
     const expanded = State.mode === "expanded";
     const greetingActive = expanded && State.view === "greeting";
 
+    // Retracted, the island shows nothing, so nothing inside it may keep animating.
+    this.contentEl.classList.toggle("paused", !(expanded && !greetingActive));
     this.contentEl.style.opacity = expanded && !greetingActive ? "1" : "0";
     this.contentEl.style.pointerEvents = expanded && !greetingActive ? "auto" : "none";
     this.greetingCanvas.style.display = greetingActive ? "block" : "none";

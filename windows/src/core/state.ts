@@ -105,6 +105,8 @@ export interface Settings {
   proactive: boolean;
   /** Minutes between check-ins. */
   proactiveMinutes: number;
+  /** Global shortcut that opens the chat, e.g. "Ctrl+Alt+M"; empty = none. */
+  chatHotkey: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -126,6 +128,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mochiFace: "none",
   proactive: false,
   proactiveMinutes: 30,
+  chatHotkey: "Ctrl+Alt+M",
 };
 
 type Listener = () => void;

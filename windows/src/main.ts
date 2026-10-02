@@ -64,6 +64,12 @@ async function main() {
         setPaused(false);
         island.alert(State.defaultView());
         break;
+      case "chat":
+        setPaused(false);
+        island.alert("prompt");
+        // Already on the chat but without the keyboard (the user clicked elsewhere).
+        if (State.view === "prompt") void Bridge.focusWindow(true);
+        break;
       case "pause":
         setPaused(!State.paused);
         if (State.paused) island.fsm.forceHidden();
