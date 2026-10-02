@@ -63,6 +63,17 @@ body {
   background: transparent;
 }
 
+/* Docked to a side edge and retracted: the window is a 6×240 strip along it. */
+#root.dock-left #wake-strip,
+#root.dock-right #wake-strip {
+  top: 0;
+  transform: none;
+  width: 6px;
+  height: 240px;
+}
+#root.dock-left #wake-strip { left: 0; }
+#root.dock-right #wake-strip { left: auto; right: 0; }
+
 /* ── Island ─────────────────────────────────────────────────────────────── */
 
 #island {

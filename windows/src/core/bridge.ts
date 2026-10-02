@@ -42,6 +42,8 @@ export interface BootInfo {
   screen: { x: number; y: number; width: number; height: number; scale: number };
   version: string;
   hookPath: string;
+  /** -1 / 1 when docked to the left / right screen edge, 0 when free. */
+  dock: number;
 }
 
 export const Bridge = {

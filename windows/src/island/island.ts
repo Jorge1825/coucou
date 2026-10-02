@@ -6,7 +6,7 @@ import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
-  islandSize,
+  islandSize, VERTICAL_W,
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
@@ -227,6 +227,11 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     this.fsm.onTransition = (from, to) => {
+      // Retracting from an open island: this is when it docks to the nearest
+      // screen edge. While it is open it stays wherever the user put it.
+      if ((to === "petit" || to === "hidden") && (from === "home" || from === "coucou")) {
+        void Bridge.dockNearest();
+      }
       switch (to) {
         case "hidden":
           this.setMode("hidden");
@@ -456,7 +461,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock);
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -481,16 +486,34 @@ export class Island {
     const r = this.radius.value;
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
-    this.islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
-    this.islandEl.style.transform = `translateX(-50%)`;
+    // Upright (docked + retracted): round the sides facing away from the edge.
+    const upright = this.dock !== 0 && State.mode !== "expanded";
+    // The side touching the screen edge is never rounded, in any size.
+    this.islandEl.style.borderRadius = upright
+      ? this.dock < 0
+        ? `0 ${r}px ${r}px 0`
+        : `${r}px 0 0 ${r}px`
+      : this.dock < 0
+        ? `0 0 ${r}px 0`
+        : this.dock > 0
+          ? `0 0 0 ${r}px`
+          : `0 0 ${r}px ${r}px`;
+    // Centred in the window, or flush with the side it is docked to.
+    this.islandEl.style.left = `${this.anchorX(w)}px`;
+    this.islandEl.style.transform = "none";
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
-    this.miniGrid.style.left = `${w - 40 - 14.5}px`;
-    this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    if (upright && State.mode === "compact") {
+      this.miniGrid.style.left = `${w / 2 - 14.5}px`;
+      this.miniGrid.style.top = `${hh - 40 - 14.5}px`;
+    } else {
+      this.miniGrid.style.left = `${w - 40 - 14.5}px`;
+      this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    }
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
-    const rect = { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    const rect = { x: this.anchorX(w), y: 0, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
@@ -502,7 +525,19 @@ export class Island {
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
-    return { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    return { x: this.anchorX(w), y: 0, w, h: hh };
+  }
+
+  /**
+   * Left edge of an island `w` wide inside the window. The window always carries
+   * the full 640 px island flush with the screen edge when docked, so a narrower
+   * island has to hug the same side instead of floating at the window centre.
+   */
+  private anchorX(w: number): number {
+    const margin = (PANEL_W - EXPANDED_W) / 2;
+    if (this.dock < 0) return margin;
+    if (this.dock > 0) return PANEL_W - margin - w;
+    return (PANEL_W - w) / 2;
   }
 
   // ── Window collapse (hidden → tiny wake strip, zero polling) ────────────────
@@ -519,13 +554,33 @@ export class Island {
         this.collapseTimer = null;
         if (State.mode !== "hidden") return;
         this.collapsed = true;
+        this.syncDockClass();
         void Bridge.setCollapsed(true);
       }, 420);
     } else if (this.collapsed) {
       // Grow the window back before the island animates open.
       this.collapsed = false;
+      this.syncDockClass();
       void Bridge.setCollapsed(false);
     }
+  }
+
+  /** -1 / 1 = docked to the left / right screen edge, 0 = free. */
+  private dock = 0;
+
+  setDock(side: number) {
+    if (side === this.dock) return;
+    this.dock = side;
+    // Retracted shapes change with the dock, so re-target size and Mochi.
+    this.animateGeometry(false);
+    this.updateBotTargets();
+    this.applyGeometry();
+  }
+
+  /** Docked and retracted: the wake strip lies along the edge (see style.css). */
+  private syncDockClass() {
+    this.root.classList.toggle("dock-left", this.collapsed && this.dock < 0);
+    this.root.classList.toggle("dock-right", this.collapsed && this.dock > 0);
   }
 
   // ── Input ───────────────────────────────────────────────────────────────────
@@ -548,6 +603,7 @@ export class Island {
         this.cancelBotHover();
         this.engine.slap();
       }
+      this.watchForDrag(e);
     });
 
     window.addEventListener("keydown", (e) => {
@@ -567,6 +623,31 @@ export class Island {
     if (!IS_TAURI) {
       window.addEventListener("mousemove", (e) => this.onCursor(e.clientX, e.clientY));
     }
+  }
+
+  /**
+   * Moving the mouse more than a few px with the button held on the island's
+   * background hands the move over to Windows, so the island can be placed
+   * anywhere. Controls and text fields keep their own behaviour.
+   */
+  private watchForDrag(down: MouseEvent) {
+    if (down.button !== 0 || !IS_TAURI) return;
+    const target = down.target as HTMLElement | null;
+    if (target?.closest("button, input, textarea, select, a, [contenteditable], [data-nodrag]")) return;
+    const startX = down.screenX;
+    const startY = down.screenY;
+    const stop = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+    };
+    const move = (e: MouseEvent) => {
+      if (e.buttons !== 1) return stop();
+      if (Math.hypot(e.screenX - startX, e.screenY - startY) < 5) return;
+      stop();
+      void Bridge.beginDrag();
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", stop);
   }
 
   /** Cursor in window-logical coordinates. */
@@ -647,6 +728,12 @@ export class Island {
     if (this.botHoverTimer != null) window.clearTimeout(this.botHoverTimer);
     this.botHoverTimer = null;
     this.engine.tgEs = 1;
+  }
+
+  /** The user shook the island around: same dizziness as three slaps. */
+  shaken() {
+    if (State.mode === "hidden") return;
+    this.handleDizzy();
   }
 
   /** Three slaps → dizzy + confused view for 3.3 s, then back. */
@@ -745,6 +832,11 @@ export class Island {
 
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
+    if (this.dock !== 0 && State.mode === "compact") {
+      // Upright bar: Mochi at the top, the mini grid at the bottom.
+      p.cx = VERTICAL_W / 2;
+      p.cy = 36;
+    }
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
     this.botSize.target = p.diameter / 0.6;

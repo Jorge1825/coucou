@@ -43,6 +43,8 @@ async function main() {
   State.loadIntegrationTasks();
   void refreshApiKey();
 
+  island.setDock(boot?.dock ?? 0);
+  await onEvent<number>("dock", (side) => island.setDock(side));
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
@@ -83,6 +85,9 @@ async function main() {
     // Let it close by itself if the user never comes near it.
     island.fsm.mouseLeft();
   });
+
+  // Dragging the island back and forth makes Mochi dizzy.
+  await onEvent<null>("shaken", () => island.shaken());
 
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 

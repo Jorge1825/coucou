@@ -58,6 +58,8 @@ export const NOTCH_W = 184;
 export const NOTCH_H = 32;
 export const COMPACT_W = 288; // NOTCH_W + 104
 export const EXPANDED_W = 640;
+/** Docked to a side edge, the retracted island stands upright: this wide, COMPACT_W tall. */
+export const VERTICAL_W = 44;
 
 export const ROUNDED_CORNER = 14; // hidden / compact
 export const EXPANDED_CORNER = 22;
@@ -101,7 +103,11 @@ export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  dock = 0,
 ): { w: number; h: number } {
+  // Docked to a side edge, retracting turns the island on its end.
+  if (dock !== 0 && mode === "hidden") return { w: 0, h: NOTCH_W };
+  if (dock !== 0 && mode === "compact") return { w: VERTICAL_W, h: COMPACT_W };
   switch (mode) {
     case "hidden":
       // No notch to hide inside on a PC: the island retracts to zero height and

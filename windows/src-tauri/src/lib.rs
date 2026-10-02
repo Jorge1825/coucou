@@ -47,6 +47,8 @@ pub struct BootInfo {
     screen: ScreenInfo,
     version: String,
     hook_path: String,
+    /// -1 / 1 when the island is docked to the left / right screen edge.
+    dock: i32,
 }
 
 #[tauri::command]
@@ -60,6 +62,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
         screen,
         version: env!("CARGO_PKG_VERSION").to_string(),
         hook_path: settings::hook_exe_path().to_string_lossy().to_string(),
+        dock: island::dock(),
     }
 }
 
@@ -123,6 +126,28 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
+}
+
+#[tauri::command]
+fn reset_position(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    island::reset_position(&app, &pref, collapsed);
+}
+
+/// The island is retracting: dock it to the nearest screen edge.
+#[tauri::command]
+fn dock_nearest(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+    island::dock_nearest(&app, &pref, collapsed);
+}
+
+/// The island's background was dragged: let Windows move the window.
+#[tauri::command]
+fn begin_drag(app: AppHandle, shared: State<Shared>) {
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    island::begin_drag(&app, pref, shared.gate.clone());
 }
 
 /// The panel is laid out in CSS px against the window's own scale. If the webview
@@ -480,6 +505,7 @@ pub fn run() {
             // Before the island: see create_settings_window.
             create_settings_window(&handle);
 
+            island::load_position();
             if let Some(win) = island::window(&handle) {
                 island::make_non_activating(&win);
                 island::apply_geometry(&handle, &loaded.screen, false);
