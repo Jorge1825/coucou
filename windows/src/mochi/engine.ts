@@ -7,6 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
+import { drawAccessories, type FaceKind, type HatKind } from "./accessories";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ export const STATE_SOUND: Partial<Record<BotStateName, string>> = {
 
 const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
   love: "heart", surprised: "dot", proud: "star", wink: "wink",
-  yawn: "tired", happy: "happy", annoyed: "line",
+  yawn: "tired", happy: "happy", annoyed: "line", remember: "happy",
 };
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -168,6 +169,10 @@ export class BotEngine {
   isMini = false;
   /** Solid body colour for mini bots / integration pills (null = Mochi gradient). */
   bodyColor: RGB | null = null;
+
+  /** What Mochi wears (chosen in Settings). Mini bots never wear anything. */
+  hat: HatKind = "none";
+  face: FaceKind = "none";
 
   // Animated state (BotEngine `s`)
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
@@ -710,6 +715,9 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    if (!this.isMini && (this.hat !== "none" || this.face !== "none")) {
+      drawAccessories(x, this.hat, this.face, this, R, rx, ry);
+    }
 
     x.restore();
 

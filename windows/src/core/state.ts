@@ -98,6 +98,9 @@ export interface Settings {
   providerUrl: string;
   /** API format for the custom preset: "anthropic" or "openai". */
   providerFormat: string;
+  /** Accessories Mochi wears — see mochi/accessories.ts. */
+  mochiHat: string;
+  mochiFace: string;
   /** Mochi may interrupt on its own (periodic check-in with the model). */
   proactive: boolean;
   /** Minutes between check-ins. */

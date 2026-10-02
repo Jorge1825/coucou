@@ -265,6 +265,39 @@ select option {
   background: rgba(245, 165, 36, 0.13);
   color: #fbc06a;
 }
+
+/* ── Mochi section ── */
+.mochi-edit {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.mochi-preview {
+  flex: 0 0 auto;
+  border-radius: 20px;
+  background: #000;
+}
+
+.mochi-pickers {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1 1 260px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.chip.on {
+  background: #fff;
+  color: #000;
+}
+
 /* ── Memory section ── */
 .memory-text {
   width: 100%;

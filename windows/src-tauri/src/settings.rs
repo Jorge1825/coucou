@@ -30,6 +30,11 @@ pub struct Settings {
     /// API format for the custom preset: "anthropic" or "openai".
     #[serde(default = "default_provider_format")]
     pub provider_format: String,
+    /// What Mochi wears. Plain ids understood by the front end ("none" = nothing).
+    #[serde(default = "default_none")]
+    pub mochi_hat: String,
+    #[serde(default = "default_none")]
+    pub mochi_face: String,
     /// Mochi may interrupt on its own (a periodic check-in with the model).
     /// Off by default: it makes background requests to the configured provider.
     #[serde(default)]
@@ -43,6 +48,8 @@ fn default_proactive_minutes() -> u32 {
     30
 }
 
+fn default_none() -> String {
+    "none".into()
 }
 
 fn default_model() -> String {

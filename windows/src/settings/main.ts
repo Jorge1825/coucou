@@ -7,6 +7,9 @@ import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { PROVIDERS, providerDef } from "../core/providers";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
+import { BotEngine } from "../mochi/engine";
+import { Sound } from "../core/sound";
+import { FACES, HATS, isFace, isHat } from "../mochi/accessories";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -494,6 +497,74 @@ function generalSection(): HTMLElement {
     ),
   );
 }
+
+// ── Mochi section ─────────────────────────────────────────────────────────────
+
+/** Plays one of Mochi's sounds in this window, at the volume chosen in Settings. */
+async function playSound(name: string) {
+  await Sound.preload();
+  Sound.setEnabled(settings.soundEnabled);
+  Sound.setVolume(settings.soundVolume);
+  Sound.resume();
+  Sound.play(name);
+}
+
+/** Live preview of Mochi plus pickers for what he wears. */
+function mochiSection(): HTMLElement {
+  const SIZE = 150;
+  const canvas = h("canvas", { class: "mochi-preview" }) as HTMLCanvasElement;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(SIZE * dpr);
+  canvas.height = Math.round(SIZE * dpr);
+  canvas.style.width = `${SIZE}px`;
+  canvas.style.height = `${SIZE}px`;
+
+  const engine = new BotEngine();
+  engine.setState("idle", true);
+  const applyLook = () => {
+    engine.hat = isHat(settings.mochiHat) ? settings.mochiHat : "none";
+    engine.face = isFace(settings.mochiFace) ? settings.mochiFace : "none";
+  };
+  applyLook();
+
+  let last = performance.now();
+  const frame = (t: number) => {
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      engine.update(Math.min(0.05, (t - last) / 1000));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      engine.draw(ctx, SIZE, SIZE);
+    }
+    last = t;
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+
+  function picker<T extends string>(
+    options: { id: T; label: string }[],
+    current: () => string,
+    set: (v: T) => void,
+  ): HTMLElement {
+    const box = h("div", { class: "chips" });
+    const buttons = options.map((o) => {
+      const b = h("button", {
+        class: "chip",
+        text: o.label,
+        onclick: () => {
+          set(o.id);
+          applyLook();
+          void save();
+          mark();
+        },
+      });
+      return { id: o.id, b };
+    });
+    const mark = () => buttons.forEach(({ id, b }) => b.classList.toggle("on", id === current()));
+    mark();
+    box.append(...buttons.map((x) => x.b));
+    return box;
+  }
 
   return h(
     "section",

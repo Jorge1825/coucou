@@ -12,6 +12,7 @@ import {
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
+import { isFace, isHat } from "../mochi/accessories";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
@@ -884,6 +885,9 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    const { mochiHat, mochiFace } = State.settings;
+    this.engine.hat = isHat(mochiHat) ? mochiHat : "none";
+    this.engine.face = isFace(mochiFace) ? mochiFace : "none";
     State.notify();
   }
 
