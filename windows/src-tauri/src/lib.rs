@@ -2,6 +2,7 @@
 
 mod claude;
 mod context;
+mod dropzone;
 mod files;
 mod hooks;
 mod hotkey;

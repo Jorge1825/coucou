@@ -194,9 +194,23 @@ export interface DragDropPayload {
 /** Files dragged onto the island. Only reaches us when the window takes the mouse. */
 export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   if (!IS_TAURI) return () => {};
-  return getCurrentWebview().onDragDropEvent((event) => {
-    handler(event.payload as DragDropPayload);
-  });
+  // Two sources — the island's own OLE drop target (dropzone.rs) and Tauri's —
+  // because either can end up the one Windows asks. A drop must only count once.
+  let lastDrop = 0;
+  const deliver = (e: DragDropPayload) => {
+    if (e.type === "drop") {
+      const now = performance.now();
+      if (now - lastDrop < 600) return;
+      lastDrop = now;
+    }
+    handler(e);
+  };
+  const offTauri = await getCurrentWebview().onDragDropEvent((event) => deliver(event.payload as DragDropPayload));
+  const offIsland = await getCurrentWebviewWindow().listen<DragDropPayload>("island-drag", (e) => deliver(e.payload));
+  return () => {
+    offTauri();
+    offIsland();
+  };
 }
 
 /**
