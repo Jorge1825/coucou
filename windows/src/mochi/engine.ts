@@ -508,6 +508,13 @@ export class BotEngine {
     }
   }
 
+  /** A quick look to one side (1 = right) and a blink: "something came in". */
+  glance(dir = 1) {
+    if (this.locks.has("yaw")) return;
+    this.anim("yaw", [[0.55 * dir, 220, Ease.out], [0.55 * dir, 700, Ease.lin], [0, 380, Ease.inOut]]);
+    window.setTimeout(() => this.blink(), 260);
+  }
+
   /** Headphones on or off. Off → Mochi stops swaying on the next frames. */
   setMusic(on: boolean) {
     if (on === this.music) return;

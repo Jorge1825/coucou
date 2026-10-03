@@ -10,6 +10,7 @@ import { setLanguage } from "./core/i18n";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerSpotifyHandlers } from "./island/spotify";
+import { registerOsNotificationHandlers } from "./island/notifications";
 
 /** The island's API badge tells the truth about the active provider's key. */
 async function refreshApiKey() {
@@ -125,6 +126,7 @@ async function main() {
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
   registerSpotifyHandlers(island);
+  registerOsNotificationHandlers(island);
 
   island.launch();
 

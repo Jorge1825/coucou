@@ -65,6 +65,31 @@ pub struct Settings {
     /// Never by default: a fully hidden island is easy to lose.
     #[serde(default)]
     pub hide_after: u32,
+    /// Show Windows notifications in the island (needs Windows' own permission).
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+    /// Silenced: notifications are listed, but never pop the island or chime.
+    #[serde(default)]
+    pub notifications_muted: bool,
+    /// What a notification does on screen: "discreet" (a small banner on the
+    /// compact island for a few seconds), "expand" (open the island) or "bell"
+    /// (nothing on screen, only the dot on the bell).
+    #[serde(default = "default_notifications_style")]
+    pub notifications_style: String,
+    /// A soft chime of our own. Off by default: the app that sent the
+    /// notification usually makes its own sound already.
+    #[serde(default)]
+    pub notifications_chime: bool,
+    /// Quiet hours: between these hours (local, 0–23) nothing pops up.
+    #[serde(default)]
+    pub notifications_quiet: bool,
+    #[serde(default = "default_quiet_from")]
+    pub notifications_quiet_from: u32,
+    #[serde(default = "default_quiet_to")]
+    pub notifications_quiet_to: u32,
+    /// Apps whose notifications are dropped entirely, by display name.
+    #[serde(default)]
+    pub notifications_muted_apps: Vec<String>,
     /// Interface language: "auto" (follow Windows), "en", "es", "ru" or "zh".
     /// Mochi's chat answers in it too.
     #[serde(default = "default_language")]
@@ -77,6 +102,18 @@ fn default_one() -> f64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_notifications_style() -> String {
+    "discreet".into()
+}
+
+fn default_quiet_from() -> u32 {
+    22
+}
+
+fn default_quiet_to() -> u32 {
+    8
 }
 
 fn default_language() -> String {
@@ -138,6 +175,14 @@ impl Default for Settings {
             idle_opacity: 1.0,
             chat_hotkey: default_chat_hotkey(),
             hide_after: 0,
+            notifications: true,
+            notifications_muted: false,
+            notifications_style: default_notifications_style(),
+            notifications_chime: false,
+            notifications_quiet: false,
+            notifications_quiet_from: default_quiet_from(),
+            notifications_quiet_to: default_quiet_to(),
+            notifications_muted_apps: Vec::new(),
             language: default_language(),
         }
     }

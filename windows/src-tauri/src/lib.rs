@@ -16,6 +16,7 @@ mod reminders;
 mod screen;
 mod secrets;
 mod settings;
+mod notifications;
 mod spotify;
 mod tray;
 mod win_user;
@@ -436,6 +437,41 @@ async fn refresh_integration(app: AppHandle, id: String) {
     integrations::poll_once(app, &id).await;
 }
 
+/// Windows' answer about notification access: allowed / denied / unspecified / unavailable.
+#[tauri::command]
+fn notifications_status() -> String {
+    notifications::status()
+}
+
+#[tauri::command]
+async fn notifications_request_access() -> String {
+    tauri::async_runtime::spawn_blocking(notifications::request_access)
+        .await
+        .unwrap_or_else(|_| "unavailable".into())
+}
+
+/// OK on a notification card: every display's island drops it from its list.
+#[tauri::command]
+fn notification_dismiss(app: AppHandle, id: u32) {
+    island::emit_all(&app, "os-notification-dismissed", id);
+}
+
+/// Apps that sent a notification this session, for the per-app mute list.
+#[tauri::command]
+fn notifications_apps() -> Vec<String> {
+    notifications::seen_apps()
+}
+
+/// Opens Windows' own notification privacy page. Only Windows can grant access;
+/// the switch there is the user's to flip.
+#[tauri::command]
+fn open_notification_settings() {
+    let _ = Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", "ms-settings:privacy-notifications"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+}
+
 /// Play/pause, next, previous — only ever from a click in the island.
 #[tauri::command]
 async fn spotify_control(action: String) -> Result<(), String> {
@@ -608,6 +644,11 @@ pub fn run() {
             refresh_integration,
             open_n8n,
             spotify_control,
+            notifications_status,
+            notifications_request_access,
+            notifications_apps,
+            notification_dismiss,
+            open_notification_settings,
             open_settings_window,
             set_paused,
         ])
@@ -642,6 +683,7 @@ pub fn run() {
             proactive::start(handle.clone());
             integrations::start(handle.clone());
             spotify::start(handle.clone());
+            notifications::start(handle.clone());
             Ok(())
         })
         .run(tauri::generate_context!())

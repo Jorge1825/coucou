@@ -306,6 +306,120 @@ body {
   color: var(--ink);
 }
 
+.header-actions button.bell {
+  position: relative;
+}
+
+.bell-dot {
+  position: absolute;
+  top: -1px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 4px rgba(244, 80, 94, 0.8);
+}
+
+/* ── Notification banner on the compact island ── */
+
+#toast {
+  position: absolute;
+  left: 62px;
+  right: 14px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font: 400 12px var(--font);
+  color: var(--dim);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+#toast.on {
+  opacity: 1;
+  transition-delay: 0.12s; /* let the island widen first */
+}
+
+#toast b {
+  flex: 0 0 auto;
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
+#toast span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+#unread-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 4px rgba(244, 80, 94, 0.8);
+  pointer-events: none;
+}
+
+/* ── Windows notification card ── */
+
+.osn-head {
+  min-width: 0;
+}
+
+.osn-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.osn-head .icon-btn:disabled {
+  opacity: 0.35;
+}
+
+.osn-pager {
+  font: 400 11px var(--font);
+  color: var(--dim-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.osn-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.osn-body {
+  font-size: 12.5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+}
+
+.btn.osn-btn {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  gap: 5px;
+}
+
 .header-actions button.minimize:hover {
   color: var(--ink);
 }

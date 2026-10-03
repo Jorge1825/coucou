@@ -124,6 +124,20 @@ export interface Settings {
   chatHotkey: string;
   /** Seconds in the compact island before it hides completely; 0 = never. */
   hideAfter: number;
+  /** Show Windows notifications in the island. */
+  notifications: boolean;
+  /** Silenced: listed, but no pop-up and no sound. */
+  notificationsMuted: boolean;
+  /** "discreet" (small banner, a few seconds), "expand" (open the island) or "bell" (dot only). */
+  notificationsStyle: string;
+  /** A soft chime of our own (the sending app usually chimes already). */
+  notificationsChime: boolean;
+  /** Quiet hours, local 0–23: nothing pops up in between. */
+  notificationsQuiet: boolean;
+  notificationsQuietFrom: number;
+  notificationsQuietTo: number;
+  /** Apps whose notifications are dropped, by display name. */
+  notificationsMutedApps: string[];
   /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
   language: string;
 }
@@ -149,6 +163,22 @@ export interface NowPlaying {
 }
 
 export const SPOTIFY_ID = "integration_spotify";
+
+/** A Windows notification — see src-tauri/src/notifications.rs. */
+export interface OsNotification {
+  id: number;
+  app: string;
+  title: string;
+  body: string;
+  /** Unix milliseconds. */
+  time: number;
+  icon: string | null;
+  muted: boolean;
+  /** Windows' Do not disturb, or an app full screen. */
+  quiet: boolean;
+  /** When the island got it (Date.now()) — what the 5-minute expiry counts from. */
+  receivedAt?: number;
+}
 export const SPOTIFY_COLOR = "#1DB954";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -177,6 +207,14 @@ export const DEFAULT_SETTINGS: Settings = {
   idleOpacity: 1,
   chatHotkey: "Ctrl+Alt+M",
   hideAfter: 0,
+  notifications: true,
+  notificationsMuted: false,
+  notificationsStyle: "discreet",
+  notificationsChime: false,
+  notificationsQuiet: false,
+  notificationsQuietFrom: 22,
+  notificationsQuietTo: 8,
+  notificationsMutedApps: [],
   language: "auto",
 };
 
@@ -213,6 +251,15 @@ class AppState {
   pendingApproval: ApprovalInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
+
+  /** Windows notifications received this session, newest first (max 20). */
+  osNotifications: OsNotification[] = [];
+  /** Which one the notification card shows (index into osNotifications). */
+  osIndex = 0;
+  /** Arrived while nobody looked: the bell's dot. */
+  osUnread = 0;
+  /** Windows' answer about access: allowed / denied / unspecified / unavailable. */
+  osAccess = "unknown";
 
   /** Last Spotify reading, and when it arrived (performance.now()). */
   spotify: NowPlaying | null = null;

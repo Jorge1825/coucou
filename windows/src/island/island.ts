@@ -10,7 +10,9 @@ import {
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { OPACITY_MIN, State, clampOpacity, type Settings } from "../core/state";
+import { OPACITY_MIN, State, clampOpacity, type OsNotification, type Settings } from "../core/state";
+import { t } from "../core/i18n";
+import { removeOsNotification } from "./notifications";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { isFace, isHat } from "../mochi/accessories";
 import { Greeting } from "../mochi/greeting";
@@ -22,6 +24,11 @@ import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+
+/** Width of the compact island while it carries a notification banner. */
+const TOAST_W = 380;
+/** How long the banner stays before the island shrinks back. */
+const TOAST_MS = 4000;
 
 /**
  * Frame budget for ambient motion — breathing, dancing, sleeping z's — when
@@ -77,6 +84,14 @@ export class Island {
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
   private countdown!: HTMLElement;
+  private toastEl!: HTMLElement;
+  private toastIcon!: HTMLImageElement;
+  private toastApp!: HTMLElement;
+  private toastText!: HTMLElement;
+  private unreadDot!: HTMLElement;
+  /** The banner on screen (app + id of the newest), and how many it groups. */
+  private toast: { app: string; count: number } | null = null;
+  private toastTimer: number | null = null;
   private wakeStrip!: HTMLElement;
 
   private header!: ViewHost;
@@ -207,6 +222,44 @@ export class Island {
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
       pickFile: () => void this.pickFile(),
+      toggleNotificationsMuted: () => {
+        State.settings.notificationsMuted = !State.settings.notificationsMuted;
+        Sound.play("blip");
+        void Bridge.saveSettings(State.settings);
+        State.notify();
+      },
+      muteNotificationApp: (app) => {
+        const muted = State.settings.notificationsMutedApps ?? [];
+        if (!muted.includes(app)) State.settings.notificationsMutedApps = [...muted, app];
+        State.osNotifications = State.osNotifications.filter((n) => n.app !== app);
+        State.osIndex = 0;
+        Sound.play("blip");
+        void Bridge.saveSettings(State.settings);
+        State.notify();
+      },
+      browseNotifications: (delta) => {
+        const last = State.osNotifications.length - 1;
+        State.osIndex = Math.max(0, Math.min(last, State.osIndex + delta));
+        Sound.play("blip");
+        State.notify();
+      },
+      dismissNotification: () => {
+        const list = State.osNotifications;
+        const shown = list[Math.min(State.osIndex, list.length - 1)];
+        if (shown) {
+          removeOsNotification(shown.id);
+          // The other displays' islands hold the same notification.
+          void Bridge.notificationDismiss(shown.id);
+        }
+        this.collapse();
+      },
+      openNotificationAccess: () => void Bridge.openNotificationSettings(),
+      checkNotificationAccess: () => {
+        void Bridge.notificationsRequestAccess().then((s) => {
+          if (s) State.osAccess = s;
+          State.notify();
+        });
+      },
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });
@@ -215,6 +268,11 @@ export class Island {
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
     this.countdown = h("div", { id: "countdown" });
+    this.toastIcon = h("img", { class: "toast-icon", alt: "" }) as HTMLImageElement;
+    this.toastApp = h("b", {});
+    this.toastText = h("span", {});
+    this.toastEl = h("div", { id: "toast" }, this.toastIcon, this.toastApp, this.toastText);
+    this.unreadDot = h("i", { id: "unread-dot" });
 
     this.header = buildHeader(actions);
     this.views = buildViews(actions, () => this.animateGeometry(false));
@@ -248,6 +306,8 @@ export class Island {
       this.botGlow,
       this.botCanvas,
       this.miniGrid,
+      this.toastEl,
+      this.unreadDot,
       this.countdown,
     );
 
@@ -385,6 +445,57 @@ export class Island {
 
   reveal() {
     this.fsm.reveal();
+  }
+
+  // ── Notification banner ─────────────────────────────────────────────────────
+
+  /**
+   * The discreet way in: the compact island widens into a one-line banner for
+   * a few seconds, Mochi glances at it, then everything shrinks back and only a
+   * dot remains. A burst from the same app becomes one banner with a count.
+   */
+  showToast(n: OsNotification) {
+    if (this.dock !== 0) {
+      // Upright on a side edge there is no room for a line of text.
+      this.reveal();
+      this.glance();
+      return;
+    }
+    if (this.toast && this.toast.app === n.app) {
+      this.toast.count++;
+    } else {
+      this.toast = { app: n.app, count: 1 };
+    }
+    const count = this.toast.count;
+    this.toastApp.textContent = n.app;
+    this.toastText.textContent = count > 1
+      ? t("{n} new notifications", { n: count })
+      : [n.title, n.body].filter((s) => s && s !== n.app).join(" · ");
+    this.toastIcon.style.display = n.icon ? "" : "none";
+    if (n.icon && this.toastIcon.src !== n.icon) this.toastIcon.src = n.icon;
+
+    if (State.mode === "hidden") this.reveal();
+    if (this.toastTimer != null) window.clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => this.endToast(), TOAST_MS);
+    this.animateGeometry(false);
+    this.glance();
+    State.notify();
+  }
+
+  private endToast() {
+    if (this.toastTimer != null) window.clearTimeout(this.toastTimer);
+    this.toastTimer = null;
+    if (!this.toast) return;
+    this.toast = null;
+    this.animateGeometry(true);
+    State.notify();
+  }
+
+  /** Mochi looks over at what just came in (the banner sits to his right). */
+  glance() {
+    if (State.paused || State.mode === "hidden") return;
+    this.engine.glance(1);
+    this.ensureRunning();
   }
 
   /** Mochi waves a hand to get the user's attention (a reminder just popped up). */
@@ -533,7 +644,9 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock, chatChars());
+    let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock, chatChars());
+    // A notification banner widens the compact island for a moment.
+    if (this.toast && State.mode === "compact" && this.dock === 0) w = TOAST_W;
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -576,9 +689,13 @@ export class Island {
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
     if (upright && State.mode === "compact") {
+      this.unreadDot.style.left = `${w / 2 + 6}px`;
+      this.unreadDot.style.top = "22px";
       this.miniGrid.style.left = `${w / 2 - 14.5}px`;
       this.miniGrid.style.top = `${hh - 40 - 14.5}px`;
     } else {
+      this.unreadDot.style.left = "50px";
+      this.unreadDot.style.top = "6px";
       this.miniGrid.style.left = `${w - 40 - 14.5}px`;
       this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
     }
@@ -783,7 +900,13 @@ export class Island {
 
     if (inIsland && !this.wasInIsland) {
       if (this.fsm.state === "coucou") this.greeting.hover();
-      this.fsm.mouseEntered();
+      if (this.toast && State.mode === "compact") {
+        // Pointing at the banner opens the whole card.
+        this.endToast();
+        this.alert("notification");
+      } else {
+        this.fsm.mouseEntered();
+      }
     }
     if (!inIsland && this.wasInIsland) {
       this.fsm.mouseLeft();
@@ -1116,7 +1239,10 @@ export class Island {
 
     // Compact mini grid
     const showGrid = State.mode === "compact";
-    this.miniGrid.style.opacity = showGrid ? "1" : "0";
+    const toastOn = showGrid && this.toast != null && this.dock === 0;
+    this.miniGrid.style.opacity = showGrid && !toastOn ? "1" : "0";
+    this.toastEl.classList.toggle("on", toastOn);
+    this.unreadDot.style.display = showGrid && !toastOn && State.osUnread > 0 ? "" : "none";
     if (showGrid) {
       const others = State.otherTasks.slice(0, 4);
       const key = others.map((t) => t.id).join("|");

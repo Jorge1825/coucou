@@ -11,7 +11,7 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
-import { renderIntegrationCard, spotifyKey, tickSpotifyCard, type IntegrationCardHooks } from "./integrations";
+import { renderIntegrationCard, spotifyKey, tickSpotifyCard, timeAgo, type IntegrationCardHooks } from "./integrations";
 import { t } from "../core/i18n";
 
 export interface ViewActions {
@@ -32,6 +32,14 @@ export interface ViewActions {
   blip(): void;
   /** Clicking the drop zone: pick a file with the system dialog instead of dragging. */
   pickFile(): void;
+  /** Windows notifications: silence all / one app, page through, grant access. */
+  toggleNotificationsMuted(): void;
+  muteNotificationApp(app: string): void;
+  browseNotifications(delta: number): void;
+  /** OK on the card: drop the notification shown from the list, then close. */
+  dismissNotification(): void;
+  openNotificationAccess(): void;
+  checkNotificationAccess(): void;
 }
 
 export interface ViewHost {
@@ -95,6 +103,14 @@ export function buildHeader(actions: ViewActions): ViewHost {
     svg(ICONS.target, 14),
   );
   const soundBtn = h("button", { title: t("Mute"), onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
+  // Windows notifications: the dot says something arrived while nobody looked.
+  const bellDot = h("i", { class: "bell-dot" });
+  const bellBtn = h(
+    "button",
+    { class: "bell", title: t("Notifications"), onclick: () => go("notification") },
+    svg(ICONS.bell, 14),
+    bellDot,
+  );
   // Fold the island now instead of waiting for the auto-close countdown.
   const minimizeBtn = h(
     "button",
@@ -111,7 +127,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
     "div",
     { id: "header" },
     h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
-    h("div", { class: "header-actions" }, gearBtn, resetBtn, soundBtn, minimizeBtn),
+    h("div", { class: "header-actions" }, bellBtn, gearBtn, resetBtn, soundBtn, minimizeBtn),
   );
 
   return {
@@ -127,6 +143,15 @@ export function buildHeader(actions: ViewActions): ViewHost {
       clear(soundBtn);
       soundBtn.append(svg(State.settings.soundEnabled ? ICONS.speakerOn : ICONS.speakerOff, 14));
       el.style.opacity = v === "confused" ? "0" : "1";
+      const muted = State.settings.notificationsMuted;
+      bellBtn.style.display = State.settings.notifications ? "" : "none";
+      bellBtn.classList.toggle("on", v === "notification");
+      bellBtn.title = muted ? t("Notifications (silenced)") : t("Notifications");
+      if (bellBtn.dataset.muted !== String(muted)) {
+        bellBtn.dataset.muted = String(muted);
+        bellBtn.replaceChildren(svg(muted ? ICONS.bellSlash : ICONS.bell, 14), bellDot);
+      }
+      bellDot.style.display = State.osUnread > 0 ? "" : "none";
     },
   };
 }
@@ -499,6 +524,97 @@ function buildSettings(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Windows notification ──────────────────────────────────────────────────────
+
+function buildNotification(actions: ViewActions): ViewHost {
+  const icon = h("img", { class: "osn-icon", alt: "" }) as HTMLImageElement;
+  const app = h("span", { class: "n" });
+  const when = h("span", {});
+  const pager = h("span", { class: "osn-pager" });
+  const prev = h("button", { class: "icon-btn", title: t("Previous"), onclick: () => actions.browseNotifications(1) },
+    svg(ICONS.chevronLeft, 8, { stroke: 2.4 }));
+  const next = h("button", { class: "icon-btn", title: t("Next"), onclick: () => actions.browseNotifications(-1) },
+    svg(ICONS.chevronRight, 8, { stroke: 2.4 }));
+  const head = h("div", { class: "who-row osn-head" }, icon, app, when, h("div", { class: "grow" }), prev, pager, next);
+  const title = h("div", { class: "title osn-title" });
+  const body = h("div", { class: "sub osn-body" });
+
+  const muteAllLabel = h("span", {});
+  const muteAll = h("button", { class: "btn secondary osn-btn", onclick: () => actions.toggleNotificationsMuted() });
+  const muteAppLabel = h("span", {});
+  let currentApp = "";
+  const muteApp = h(
+    "button",
+    { class: "btn secondary osn-btn", onclick: () => currentApp && actions.muteNotificationApp(currentApp) },
+    muteAppLabel,
+  );
+  const gear = h("button", {
+    class: "btn secondary osn-btn",
+    title: t("Notification settings"),
+    onclick: () => actions.openSettingsWindow(),
+  }, svg(ICONS.gear, 12));
+  const row = h("div", { class: "actions" }, muteAll, muteApp, gear, h("div", { class: "grow" }),
+    btn(t("OK"), "primary", () => actions.dismissNotification()));
+  const filled = stack(116, 16, head, title, body, row);
+
+  // Nothing to show yet: say why, and offer the way to Windows' permission.
+  const emptyTitle = h("div", { class: "title" });
+  const emptySub = h("div", { class: "sub" });
+  const emptyRow = h("div", { class: "actions" },
+    btn(t("Open Windows settings"), "primary", () => actions.openNotificationAccess()),
+    btn(t("Check again"), "secondary", () => actions.checkNotificationAccess()),
+  );
+  const empty = stack(116, 16, emptyTitle, emptySub, emptyRow);
+
+  const el = h("div", { class: "view" }, card("indigo", filled, empty));
+  let iconSrc = "";
+  return {
+    el,
+    sync() {
+      if (State.view === "notification") State.osUnread = 0;
+      const list = State.osNotifications;
+      const n = list[Math.min(State.osIndex, list.length - 1)];
+      filled.style.display = n ? "" : "none";
+      empty.style.display = n ? "none" : "";
+
+      clear(muteAll);
+      const muted = State.settings.notificationsMuted;
+      muteAllLabel.textContent = muted ? t("Unsilence") : t("Silence");
+      muteAll.append(svg(muted ? ICONS.bell : ICONS.bellSlash, 12), muteAllLabel);
+
+      if (!n) {
+        const allowed = State.osAccess === "allowed";
+        emptyTitle.textContent = allowed
+          ? t("No notifications yet.")
+          : t("Coucou can't read Windows notifications yet.");
+        emptySub.textContent = allowed
+          ? t("New ones will show up here as they arrive.")
+          : t("Turn on “Notification access” in Windows settings, then come back.");
+        emptyRow.style.display = allowed ? "none" : "";
+        return;
+      }
+      currentApp = n.app;
+      if ((n.icon ?? "") !== iconSrc) {
+        iconSrc = n.icon ?? "";
+        icon.src = iconSrc;
+      }
+      icon.style.display = n.icon ? "" : "none";
+      app.textContent = n.app;
+      when.textContent = n.time ? timeAgo(n.time) : "";
+      title.textContent = n.title;
+      body.textContent = n.body;
+      body.style.display = n.body ? "" : "none";
+      const short = n.app.length > 14 ? `${n.app.slice(0, 13)}…` : n.app;
+      muteAppLabel.textContent = t("Mute {app}", { app: short });
+      const many = list.length > 1;
+      for (const x of [prev, pager, next]) x.style.display = many ? "" : "none";
+      pager.textContent = `${State.osIndex + 1}/${list.length}`;
+      (prev as HTMLButtonElement).disabled = State.osIndex >= list.length - 1;
+      (next as HTMLButtonElement).disabled = State.osIndex <= 0;
+    },
+  };
+}
+
 // ── Placeholders filled in later stages ───────────────────────────────────────
 
 function buildPlaceholder(title: string, sub: string): ViewHost {
@@ -527,6 +643,7 @@ export function buildViews(
   map.set("confused", buildConfused());
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
+  map.set("notification", buildNotification(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("upload", buildUpload(actions));
   map.set("uploading", buildUploading());

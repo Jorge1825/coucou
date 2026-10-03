@@ -137,6 +137,16 @@ export const Bridge = {
   spotifyControl: (action: "play_pause" | "next" | "previous") =>
     call<void>("spotify_control", { action }),
 
+  // ── Windows notifications ─────────────────────────────────────────────────
+  notificationsStatus: () => call<string>("notifications_status"),
+  notificationsRequestAccess: () => call<string>("notifications_request_access"),
+  /** Apps seen this session, for the per-app mute list. */
+  notificationsApps: () => call<string[]>("notifications_apps"),
+  /** Tells every island to drop this notification from its list. */
+  notificationDismiss: (id: number) => call<void>("notification_dismiss", { id }),
+  /** Windows' own privacy page — only the user can grant access there. */
+  openNotificationSettings: () => call<void>("open_notification_settings"),
+
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
 };
