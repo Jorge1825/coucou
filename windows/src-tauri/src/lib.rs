@@ -18,6 +18,7 @@ mod screen;
 mod secrets;
 mod settings;
 mod spotify;
+mod sysinfo;
 mod tray;
 mod win_user;
 

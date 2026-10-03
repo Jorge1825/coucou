@@ -98,6 +98,7 @@ struct Turn {
 
 const REMEMBER: &str = "remember";
 const REMIND: &str = "remind";
+const SYSTEM_STATS: &str = "system_stats";
 /// A turn may chain a few `remember` calls before the final answer; more than
 /// this is a model going in circles.
 const MAX_TOOL_ROUNDS: usize = 3;
@@ -117,6 +118,16 @@ they would want a nudge about (a meeting, a payment, a call, an appointment). `w
 Never put passwords, keys or other secrets in `text`."
 }
 
+fn system_stats_description() -> &'static str {
+    "Read how the user's PC is doing right now: CPU load, memory in use, free disk space, battery and uptime. \
+Read-only, and it takes no arguments. Call it only when the user asks about their computer's performance, \
+resources, battery or storage — never on your own, and never to start a conversation."
+}
+
+fn system_stats_schema() -> Value {
+    json!({ "type": "object", "properties": {} })
+}
+
 fn remind_schema() -> Value {
     json!({
         "type": "object",
@@ -133,6 +144,7 @@ fn client_tools() -> Vec<(&'static str, &'static str, Value)> {
     vec![
         (REMEMBER, remember_description(), remember_schema()),
         (REMIND, remind_description(), remind_schema()),
+        (SYSTEM_STATS, system_stats_description(), system_stats_schema()),
     ]
 }
 
@@ -247,7 +259,7 @@ fn anthropic_tools() -> Value {
 }
 
 fn is_client_tool(name: Option<&str>) -> bool {
-    matches!(name, Some(REMEMBER) | Some(REMIND))
+    matches!(name, Some(REMEMBER) | Some(REMIND) | Some(SYSTEM_STATS))
 }
 
 /// Prompt caching is Anthropic's own feature; other servers that merely speak the
@@ -384,6 +396,7 @@ fn parse_turn(format: ApiFormat, response: &Value) -> Result<Turn, String> {
 fn run_tool(name: &str, input: &Value) -> String {
     match name {
         REMIND => run_remind(input),
+        SYSTEM_STATS => crate::sysinfo::describe(&crate::sysinfo::read()),
         _ => run_remember(input),
     }
 }
