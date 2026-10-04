@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Windows: banners (clipboard, notifications, calendar, system) now show on an island docked to a side edge too — it turns horizontal for the banner and goes back upright afterwards. Before, a docked island only glanced, so suggestions seemed to appear on one screen only
+- Windows: Settings → Smart clipboard → Show suggestions on: every display, the display with the mouse, or the main display only
 - Windows: Settings reorganised — a larger window with a vertical menu of six categories (General, Claude Code & AI, Mochi, Notifications & alerts, Productivity, Integrations), sections laid out in one to three columns depending on the width, and a search box across everything; the menu becomes tabs on a narrow window
 - Windows: smart clipboard (opt-in) — copied text gets a discreet banner offering Explain / Summarize / Translate / Fix through the chat, plus a short history that forgets itself; password-manager copies and anything that looks like a secret are ignored
 - Windows: system at a glance — banners only when the battery runs low, the CPU or memory stays high, or the internet drops (thresholds configurable); Mochi gets tired or sweats

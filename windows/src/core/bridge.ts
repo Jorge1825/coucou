@@ -220,6 +220,11 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
  * island per display, and the global `listen` would also hand us the cursor,
  * dock and shake events meant for the other displays' islands.
  */
+/** This window's label: "island" (main display), "island-1"… or "settings". */
+export function windowLabel(): string {
+  return IS_TAURI ? getCurrentWebviewWindow().label : "island";
+}
+
 export async function onEvent<T>(name: string, handler: (payload: T) => void) {
   if (!IS_TAURI) return () => {};
   return getCurrentWebviewWindow().listen<T>(name, (e) => handler(e.payload));

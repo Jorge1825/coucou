@@ -132,6 +132,9 @@ pub struct ClipboardPrefs {
     /// How many copies the history keeps, and for how long (minutes).
     pub history: u32,
     pub keep_minutes: u32,
+    /// Where the suggestion banner shows: "all" displays, the one with the
+    /// "cursor", or only the "main" one. The history is kept on all of them.
+    pub screens: String,
 }
 
 impl Default for ClipboardPrefs {
@@ -144,6 +147,7 @@ impl Default for ClipboardPrefs {
             translate_to: "auto".into(),
             history: 15,
             keep_minutes: 30,
+            screens: "all".into(),
         }
     }
 }

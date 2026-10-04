@@ -433,4 +433,9 @@ export const RU: Record<string, string> = {
   "Claude Code & AI": "Claude Code и ИИ",
   "Notifications & alerts": "Уведомления и оповещения",
   "Productivity": "Продуктивность",
+
+  // ── Clipboard screens ──
+  "Show suggestions on": "Показывать подсказки на",
+  "The display with the mouse": "Экране с курсором мыши",
+  "Main display only": "Только основном экране",
 };

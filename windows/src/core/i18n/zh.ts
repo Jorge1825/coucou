@@ -433,4 +433,9 @@ export const ZH: Record<string, string> = {
   "Claude Code & AI": "Claude Code 与 AI",
   "Notifications & alerts": "通知与提醒",
   "Productivity": "效率",
+
+  // ── Clipboard screens ──
+  "Show suggestions on": "建议显示在",
+  "The display with the mouse": "鼠标所在的显示器",
+  "Main display only": "仅主显示器",
 };

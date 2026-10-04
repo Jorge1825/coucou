@@ -168,6 +168,8 @@ export interface ClipboardPrefs {
   translateTo: string;
   history: number;
   keepMinutes: number;
+  /** Where the suggestion banner shows: "all", "cursor" or "main". */
+  screens: string;
 }
 
 export interface SystemPrefs {
@@ -343,7 +345,7 @@ export const DEFAULT_SETTINGS: Settings = {
   language: "auto",
   clipboard: {
     enabled: false, suggest: true, minChars: 20,
-    actions: ["explain", "summarize", "translate", "fix"], translateTo: "auto", history: 15, keepMinutes: 30,
+    actions: ["explain", "summarize", "translate", "fix"], translateTo: "auto", history: 15, keepMinutes: 30, screens: "all",
   },
   system: { enabled: true, batteryLow: 20, cpuHigh: 90, memoryHigh: 90, offline: true, react: true },
   sessions: { separate: true, max: 4, lingerMinutes: 30, gitSummary: true },

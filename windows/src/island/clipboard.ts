@@ -4,7 +4,7 @@
 // it: explain, summarize, translate, fix. An action asks the chat — nothing is
 // sent anywhere until one is clicked.
 
-import { onEvent } from "../core/bridge";
+import { onEvent, windowLabel } from "../core/bridge";
 import { language, t } from "../core/i18n";
 import { State, type ClipItem } from "../core/state";
 import { askChat } from "../views/chat";
@@ -66,10 +66,30 @@ let sweepTimer: number | null = null;
 
 export function registerClipboardHandlers(isl: Island) {
   island = isl;
-  void onEvent<{ text: string; at: number }>("clipboard", (c) => handle(c));
+  void onEvent<Copied>("clipboard", (c) => handle(c));
 }
 
-function handle(c: { text: string; at: number }) {
+interface Copied {
+  text: string;
+  at: number;
+  /** The island on the display with the cursor at copy time. */
+  cursorIsland?: string;
+}
+
+/** Does this island show the suggestion banner (Settings → "Show suggestions on")? */
+function showsHere(c: Copied): boolean {
+  const me = windowLabel();
+  switch (State.settings.clipboard?.screens ?? "all") {
+    case "cursor":
+      return (c.cursorIsland ?? "island") === me;
+    case "main":
+      return me === "island";
+    default:
+      return true;
+  }
+}
+
+function handle(c: Copied) {
   const p = State.settings.clipboard;
   if (!p?.enabled || State.paused) return;
   const keep = Math.max(1, p.history || 1);
@@ -78,7 +98,7 @@ function handle(c: { text: string; at: number }) {
   startSweeping();
 
   // Copying while the island is open (say, from the chat) must not interrupt it.
-  if (p.suggest && (p.actions?.length ?? 0) > 0 && State.mode !== "expanded" && island) {
+  if (p.suggest && (p.actions?.length ?? 0) > 0 && State.mode !== "expanded" && island && showsHere(c)) {
     island.showBanner({
       key: "clipboard",
       title: clipKindLabel(clipKind(c.text)),

@@ -433,4 +433,9 @@ export const ES: Record<string, string> = {
   "Claude Code & AI": "Claude Code e IA",
   "Notifications & alerts": "Notificaciones y avisos",
   "Productivity": "Productividad",
+
+  // ── Clipboard screens ──
+  "Show suggestions on": "Mostrar sugerencias en",
+  "The display with the mouse": "La pantalla donde está el ratón",
+  "Main display only": "Solo la pantalla principal",
 };

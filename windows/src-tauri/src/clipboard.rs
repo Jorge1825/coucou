@@ -36,6 +36,9 @@ pub struct Copied {
     pub text: String,
     /// Unix milliseconds.
     pub at: i64,
+    /// The island on the display with the cursor when it was copied — for
+    /// "show suggestions on the screen with the mouse".
+    pub cursor_island: String,
 }
 
 fn prefs(app: &AppHandle) -> (bool, usize) {
@@ -70,7 +73,8 @@ pub fn start(app: AppHandle) {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
-            island::emit_all(&app, "clipboard", Copied { text, at });
+            let cursor_island = island::label_under_cursor(&app);
+            island::emit_all(&app, "clipboard", Copied { text, at, cursor_island });
         }
     });
 }

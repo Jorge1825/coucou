@@ -4,7 +4,7 @@
 import { Tracked, Spring } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
-  EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
+  EXPANDED_CORNER, EXPANDED_W, NOTCH_H, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, type BotEmoteName, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
   islandSize, VERTICAL_W,
   type IslandMode, type IslandViewName,
@@ -501,11 +501,6 @@ export class Island {
    * a line of text, so Mochi only glances.
    */
   showBanner(b: Banner) {
-    if (this.dock !== 0) {
-      this.reveal();
-      if (b.glance !== false) this.glance();
-      return;
-    }
     if (this.toast && this.toast.key === b.key && b.group) {
       this.toast.count++;
     } else {
@@ -713,7 +708,12 @@ export class Island {
   private targetSize(): { w: number; h: number; r: number } {
     let { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.dock, chatChars());
     // A notification banner widens the compact island for a moment.
-    if (this.toast && State.mode === "compact" && this.dock === 0) w = TOAST_W;
+    // Docked upright to a side edge, it turns horizontal for the banner and
+    // goes back to the upright bar afterwards.
+    if (this.toast && State.mode === "compact") {
+      w = TOAST_W;
+      h = NOTCH_H;
+    }
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -739,7 +739,7 @@ export class Island {
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
     // Upright (docked + retracted): round the sides facing away from the edge.
-    const upright = this.dock !== 0 && State.mode !== "expanded";
+    const upright = this.dock !== 0 && State.mode !== "expanded" && !(this.toast && State.mode === "compact");
     // The side touching the screen edge is never rounded, in any size.
     this.islandEl.style.borderRadius = upright
       ? this.dock < 0
@@ -1163,7 +1163,7 @@ export class Island {
 
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
-    if (this.dock !== 0 && State.mode === "compact") {
+    if (this.dock !== 0 && State.mode === "compact" && !this.toast) {
       // Upright bar: Mochi at the top, the mini grid at the bottom.
       p.cx = VERTICAL_W / 2;
       p.cy = 36;
@@ -1309,7 +1309,7 @@ export class Island {
 
     // Compact mini grid
     const showGrid = State.mode === "compact";
-    const toastOn = showGrid && this.toast != null && this.dock === 0;
+    const toastOn = showGrid && this.toast != null;
     this.miniGrid.style.opacity = showGrid && !toastOn ? "1" : "0";
     this.toastEl.classList.toggle("on", toastOn);
     this.unreadDot.style.display = showGrid && !toastOn && State.osUnread > 0 ? "" : "none";
