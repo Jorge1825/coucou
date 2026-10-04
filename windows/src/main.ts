@@ -11,6 +11,11 @@ import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerSpotifyHandlers } from "./island/spotify";
 import { registerOsNotificationHandlers } from "./island/notifications";
+import { registerClipboardHandlers } from "./island/clipboard";
+import { registerSystemHandlers } from "./island/system";
+import { registerDayHandlers } from "./island/day";
+import { registerOutfits } from "./island/outfits";
+import { registerCalendarHandlers } from "./island/calendar";
 
 /** The island's API badge tells the truth about the active provider's key. */
 async function refreshApiKey() {
@@ -127,6 +132,11 @@ async function main() {
   registerIntegrationHandlers(island);
   registerSpotifyHandlers(island);
   registerOsNotificationHandlers(island);
+  registerClipboardHandlers(island);
+  registerSystemHandlers(island);
+  registerDayHandlers(island);
+  registerOutfits(island);
+  registerCalendarHandlers(island);
 
   island.launch();
 

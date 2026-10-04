@@ -22,6 +22,7 @@ pub const KNOWN_KEYS: &[&str] = &[
     "notion-api-key",
     "linear-api-key",
     "calcom-api-key",
+    "calendar-ics",
 ];
 
 fn entry(key: &str) -> Option<Entry> {

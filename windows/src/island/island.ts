@@ -13,8 +13,9 @@ import { Sound } from "../core/sound";
 import { OPACITY_MIN, State, clampOpacity, type OsNotification, type Settings } from "../core/state";
 import { t } from "../core/i18n";
 import { removeOsNotification } from "./notifications";
+import { dismissClip, runClipAction } from "./clipboard";
 import { BotEngine, hexToRGB } from "../mochi/engine";
-import { isFace, isHat } from "../mochi/accessories";
+import { isFace, isHat, isNeck, type Extras, type HatKind } from "../mochi/accessories";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
@@ -24,6 +25,23 @@ import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+
+/** Where pointing at a banner leads: a view, an action, or just open the island. */
+export type BannerOpen = IslandViewName | (() => void) | null;
+
+export interface Banner {
+  /** Same key while visible + `group`: counts up instead of replacing. */
+  key: string;
+  title: string;
+  text: string;
+  icon?: string | null;
+  open?: BannerOpen;
+  group?: (count: number) => string;
+  /** How long it stays (default 4 s). */
+  ms?: number;
+  /** Mochi looks at it (default yes). */
+  glance?: boolean;
+}
 
 /** Width of the compact island while it carries a notification banner. */
 const TOAST_W = 380;
@@ -89,8 +107,8 @@ export class Island {
   private toastApp!: HTMLElement;
   private toastText!: HTMLElement;
   private unreadDot!: HTMLElement;
-  /** The banner on screen (app + id of the newest), and how many it groups. */
-  private toast: { app: string; count: number } | null = null;
+  /** The banner on screen, how many it groups, and where pointing at it leads. */
+  private toast: { key: string; count: number; open: BannerOpen } | null = null;
   private toastTimer: number | null = null;
   private wakeStrip!: HTMLElement;
 
@@ -180,7 +198,7 @@ export class Island {
           integration_calcom: "https://app.cal.com/bookings",
           integration_spotify: "https://open.spotify.com",
         };
-        if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
+        if (task.source === "claudeCode") void Bridge.openInVSCode(task.sessionCwd ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
@@ -197,8 +215,8 @@ export class Island {
         State.pendingApproval = null;
         State.isPinned = false;
         this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
-        State.setPillBadge("integration_claude", null);
+        State.updateTask(req.taskId, "working");
+        State.setPillBadge(req.taskId, null);
         this.setView(State.defaultView());
       },
       toggleSound: () => {
@@ -242,6 +260,17 @@ export class Island {
         State.osIndex = Math.max(0, Math.min(last, State.osIndex + delta));
         Sound.play("blip");
         State.notify();
+      },
+      clipAction: (action) => runClipAction(action),
+      browseClips: (delta) => {
+        const last = State.clips.length - 1;
+        State.clipIndex = Math.max(0, Math.min(last, State.clipIndex + delta));
+        Sound.play("blip");
+        State.notify();
+      },
+      dismissClip: () => {
+        dismissClip();
+        this.collapse();
       },
       dismissNotification: () => {
         const list = State.osNotifications;
@@ -432,7 +461,7 @@ export class Island {
    * still waiting keeps its badge on the compact island, so it isn't lost.
    */
   minimize() {
-    if (State.pendingApproval) State.setPillBadge("integration_claude", "approval");
+    if (State.pendingApproval) State.setPillBadge(State.pendingApproval.taskId, "approval");
     this.collapse();
   }
 
@@ -455,31 +484,51 @@ export class Island {
    * dot remains. A burst from the same app becomes one banner with a count.
    */
   showToast(n: OsNotification) {
+    this.showBanner({
+      key: `os:${n.app}`,
+      title: n.app,
+      text: [n.title, n.body].filter((x) => x && x !== n.app).join(" · "),
+      icon: n.icon,
+      open: "notification",
+      group: (count) => t("{n} new notifications", { n: count }),
+    });
+  }
+
+  /**
+   * A one-line banner on the compact island: the discreet way for anything to
+   * say something (notifications, clipboard, system, calendar, Mochi's day).
+   * Pointing at it follows `open`. Upright on a side edge there is no room for
+   * a line of text, so Mochi only glances.
+   */
+  showBanner(b: Banner) {
     if (this.dock !== 0) {
-      // Upright on a side edge there is no room for a line of text.
       this.reveal();
-      this.glance();
+      if (b.glance !== false) this.glance();
       return;
     }
-    if (this.toast && this.toast.app === n.app) {
+    if (this.toast && this.toast.key === b.key && b.group) {
       this.toast.count++;
     } else {
-      this.toast = { app: n.app, count: 1 };
+      this.toast = { key: b.key, count: 1, open: b.open ?? null };
     }
+    this.toast.open = b.open ?? null;
     const count = this.toast.count;
-    this.toastApp.textContent = n.app;
-    this.toastText.textContent = count > 1
-      ? t("{n} new notifications", { n: count })
-      : [n.title, n.body].filter((s) => s && s !== n.app).join(" · ");
-    this.toastIcon.style.display = n.icon ? "" : "none";
-    if (n.icon && this.toastIcon.src !== n.icon) this.toastIcon.src = n.icon;
+    this.toastApp.textContent = b.title;
+    this.toastText.textContent = count > 1 && b.group ? b.group(count) : b.text;
+    this.toastIcon.style.display = b.icon ? "" : "none";
+    if (b.icon && this.toastIcon.src !== b.icon) this.toastIcon.src = b.icon;
 
     if (State.mode === "hidden") this.reveal();
     if (this.toastTimer != null) window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.endToast(), TOAST_MS);
+    this.toastTimer = window.setTimeout(() => this.endToast(), b.ms ?? TOAST_MS);
     this.animateGeometry(false);
-    this.glance();
+    if (b.glance !== false) this.glance();
     State.notify();
+  }
+
+  /** Takes a banner down early (e.g. the meeting it counted down to started). */
+  hideBanner(key: string) {
+    if (this.toast?.key === key) this.endToast();
   }
 
   private endToast() {
@@ -489,6 +538,24 @@ export class Island {
     this.toast = null;
     this.animateGeometry(true);
     State.notify();
+  }
+
+  /** What Mochi wears by itself right now (see outfits.ts); null = what you picked. */
+  setOutfit(hat: HatKind | null, extras: Extras) {
+    const same =
+      this.engine.autoHat === hat &&
+      JSON.stringify(this.engine.autoExtras) === JSON.stringify(extras);
+    if (same) return;
+    this.engine.autoHat = hat;
+    this.engine.autoExtras = extras;
+    this.ensureRunning();
+  }
+
+  /** A few particles around Mochi (sweat when the PC struggles, stars to celebrate…). */
+  particles(type: "sweat" | "star" | "spark" | "heart" | "z", count: number) {
+    if (State.paused || State.mode === "hidden") return;
+    this.engine.emit(type, count);
+    this.ensureRunning();
   }
 
   /** Mochi looks over at what just came in (the banner sits to his right). */
@@ -901,9 +968,12 @@ export class Island {
     if (inIsland && !this.wasInIsland) {
       if (this.fsm.state === "coucou") this.greeting.hover();
       if (this.toast && State.mode === "compact") {
-        // Pointing at the banner opens the whole card.
+        // Pointing at the banner opens what it is about.
+        const open = this.toast.open;
         this.endToast();
-        this.alert("notification");
+        if (typeof open === "function") open();
+        else if (open) this.alert(open);
+        else this.fsm.mouseEntered();
       } else {
         this.fsm.mouseEntered();
       }
@@ -1272,6 +1342,7 @@ export class Island {
     const { mochiHat, mochiFace } = State.settings;
     this.engine.hat = isHat(mochiHat) ? mochiHat : "none";
     this.engine.face = isFace(mochiFace) ? mochiFace : "none";
+    this.engine.neck = isNeck(State.settings.mochiNeck) ? State.settings.mochiNeck : "none";
     applyTransparency(State.settings);
     State.notify();
   }

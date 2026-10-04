@@ -9,8 +9,13 @@ import { DEFAULT_SETTINGS, OPACITY_MIN, clampOpacity, type Settings } from "../c
 import { h, clear } from "../views/dom";
 import { BotEngine } from "../mochi/engine";
 import { Sound } from "../core/sound";
-import { FACES, HATS, isFace, isHat } from "../mochi/accessories";
+import { FACES, HATS, NECKS, isFace, isHat, isNeck } from "../mochi/accessories";
+import {
+  calendarSection, clipboardSection, daySection, outfitsSection, sessionsSection, systemSection, type Ctx,
+} from "./features";
 import { LANGUAGES, setLanguage, t } from "../core/i18n";
+import { ICONS } from "../views/icons";
+import { buildShell } from "./shell";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -890,6 +895,7 @@ function mochiSection(): HTMLElement {
   const applyLook = () => {
     engine.hat = isHat(settings.mochiHat) ? settings.mochiHat : "none";
     engine.face = isFace(settings.mochiFace) ? settings.mochiFace : "none";
+    engine.neck = isNeck(settings.mochiNeck) ? settings.mochiNeck : "none";
   };
   applyLook();
 
@@ -963,6 +969,10 @@ function mochiSection(): HTMLElement {
         h("div", { class: "row" },
           h("label", { text: t("Face") }),
           picker(FACES, () => settings.mochiFace, (v) => { settings.mochiFace = v; }),
+        ),
+        h("div", { class: "row" },
+          h("label", { text: t("Neck") }),
+          picker(NECKS, () => settings.mochiNeck, (v) => { settings.mochiNeck = v; }),
         ),
         h("div", { class: "row" },
           h("label", { text: t("Preview") }),
@@ -1149,22 +1159,35 @@ async function main() {
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 
+  present["calendar-ics"] = (await Bridge.secretPresent("calendar-ics")) ?? false;
+  const ctx: Ctx = { settings: () => settings, save, toggle, present };
+
   clear(root);
   root.append(
-    h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
-    apiSection(present),
-    integrationsSection(present),
-    mochiSection(),
-    notificationsSection(),
-    transparencySection(),
-    memorySection(),
-    remindersSection(),
-    generalSection(),
-    h("div", {
-      class: "hint",
-      text: t("No telemetry. Network requests only go to the services you configure yourself."),
-    }),
+    buildShell(
+      h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
+      h("div", {
+        class: "hint",
+        text: t("No telemetry. Network requests only go to the services you configure yourself."),
+      }),
+      [
+        { id: "general", label: t("General"), icon: ICONS.gear, sections: [generalSection(), transparencySection()] },
+        {
+          id: "claude", label: t("Claude Code & AI"), icon: ICONS.bubble,
+          sections: [claudeSection(status), sessionsSection(ctx), apiSection(present)],
+        },
+        { id: "mochi", label: "Mochi", icon: ICONS.star, sections: [mochiSection(), outfitsSection(ctx), daySection(ctx)] },
+        {
+          id: "alerts", label: t("Notifications & alerts"), icon: ICONS.bell,
+          sections: [notificationsSection(), systemSection(ctx), remindersSection()],
+        },
+        {
+          id: "productivity", label: t("Productivity"), icon: ICONS.timer,
+          sections: [calendarSection(ctx), clipboardSection(ctx), memorySection()],
+        },
+        { id: "integrations", label: t("Integrations"), icon: ICONS.stack, sections: [integrationsSection(present)] },
+      ],
+    ),
   );
 
   void onEvent<Settings>("settings-changed", (s) => {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Windows: Settings reorganised — a larger window with a vertical menu of six categories (General, Claude Code & AI, Mochi, Notifications & alerts, Productivity, Integrations), sections laid out in one to three columns depending on the width, and a search box across everything; the menu becomes tabs on a narrow window
+- Windows: smart clipboard (opt-in) — copied text gets a discreet banner offering Explain / Summarize / Translate / Fix through the chat, plus a short history that forgets itself; password-manager copies and anything that looks like a secret are ignored
+- Windows: system at a glance — banners only when the battery runs low, the CPU or memory stays high, or the internet drops (thresholds configurable); Mochi gets tired or sweats
+- Windows: one pill per Claude Code session (up to a configurable number), approvals routed to the right one, idle extra sessions leave by themselves; finished runs show what git says changed (files, +lines/−lines, new files)
+- Windows: calendar from any iCal (.ics) address (Google, Outlook) — free, no API key: Calendar pill with Join buttons for Meet/Teams/Zoom, a banner before each meeting with optional countdown, and "starting now". Recurring events, exceptions and moved instances supported
+- Windows: Mochi reacts to your day — break suggestions after a long stretch, celebrations for finished tasks, birthday greeting
+- Windows: new outfits — party hat, beanie, nightcap, Santa and witch hats, scarf and bow tie to pick by hand; automatic outfits for birthday, festive days, night, winter, rain/snow (Open-Meteo, free, opt-in) and full-screen games (gamer headset)
 - Windows: OK on a notification card also removes it from the list, on every display
 - Windows: notifications leave the bell list 5 minutes after they arrive (never while you are reading the card); the sweep timer only runs while there are any. App logos and the seen-apps list are capped
 - Windows: notifications are discreet by default — the compact island widens into a one-line banner for 4 s (pointing at it opens the full card), Mochi just glances at it, bursts from one app become a single banner with a count, and a dot stays afterwards. No chime of our own unless you turn it on. Nothing pops up while the island is open, in quiet hours, or while Windows is in Do not disturb or an app is full screen. Settings → Notifications → When one arrives: Discreet / Open the island / Only the dot on the bell

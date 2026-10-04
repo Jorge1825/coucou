@@ -39,6 +39,8 @@ pub struct Settings {
     pub mochi_hat: String,
     #[serde(default = "default_none")]
     pub mochi_face: String,
+    #[serde(default = "default_none")]
+    pub mochi_neck: String,
     /// Mochi may interrupt on its own (a periodic check-in with the model).
     /// Off by default: it makes background requests to the configured provider.
     #[serde(default)]
@@ -94,6 +96,179 @@ pub struct Settings {
     /// Mochi's chat answers in it too.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Smart clipboard: suggestions when text is copied, and a short history.
+    #[serde(default)]
+    pub clipboard: ClipboardPrefs,
+    /// Battery, CPU, memory and network at a glance — only when something is off.
+    #[serde(default)]
+    pub system: SystemPrefs,
+    /// Claude Code: one pill per session, and what each finished run changed.
+    #[serde(default)]
+    pub sessions: SessionPrefs,
+    /// Upcoming meetings from an iCal (.ics) address.
+    #[serde(default)]
+    pub calendar: CalendarPrefs,
+    /// Mochi reacting to your day: breaks, celebrations, birthday, seasons.
+    #[serde(default)]
+    pub day: DayPrefs,
+    /// What Mochi puts on by itself: pyjamas at night, umbrella in the rain, gamer gear.
+    #[serde(default)]
+    pub outfits: OutfitPrefs,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClipboardPrefs {
+    /// Off by default: reading the clipboard is something the user opts into.
+    pub enabled: bool,
+    /// Show the little banner with actions when text is copied.
+    pub suggest: bool,
+    /// Shorter copies are ignored.
+    pub min_chars: u32,
+    /// Offered actions: explain, summarize, translate, fix.
+    pub actions: Vec<String>,
+    /// Target language for "translate": "auto" = the interface language.
+    pub translate_to: String,
+    /// How many copies the history keeps, and for how long (minutes).
+    pub history: u32,
+    pub keep_minutes: u32,
+}
+
+impl Default for ClipboardPrefs {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            suggest: true,
+            min_chars: 20,
+            actions: vec!["explain".into(), "summarize".into(), "translate".into(), "fix".into()],
+            translate_to: "auto".into(),
+            history: 15,
+            keep_minutes: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SystemPrefs {
+    pub enabled: bool,
+    /// Warn under this battery level (percent) while not charging; 0 = never.
+    pub battery_low: u32,
+    /// Warn when the CPU stays above this (percent) for a while; 0 = never.
+    pub cpu_high: u32,
+    /// Warn above this memory use (percent); 0 = never.
+    pub memory_high: u32,
+    /// Warn when the internet connection drops.
+    pub offline: bool,
+    /// Mochi shows it too (sweat, yawn…), not just the banner.
+    pub react: bool,
+}
+
+impl Default for SystemPrefs {
+    fn default() -> Self {
+        Self { enabled: true, battery_low: 20, cpu_high: 90, memory_high: 90, offline: true, react: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionPrefs {
+    /// One pill per Claude Code session instead of a single shared one.
+    pub separate: bool,
+    /// Most session pills at once.
+    pub max: u32,
+    /// An extra session pill leaves this long after its last activity (minutes).
+    pub linger_minutes: u32,
+    /// Show files changed and lines added/removed when a run finishes (git).
+    pub git_summary: bool,
+}
+
+impl Default for SessionPrefs {
+    fn default() -> Self {
+        Self { separate: true, max: 4, linger_minutes: 30, git_summary: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CalendarPrefs {
+    /// Off until an iCal address is set (it lives in the Credential Manager).
+    pub enabled: bool,
+    /// Banner this many minutes before a meeting; 0 = no banner.
+    pub remind_minutes: u32,
+    /// Countdown on the compact island during the last minutes.
+    pub countdown: bool,
+    /// Show all-day events too.
+    pub all_day: bool,
+}
+
+impl Default for CalendarPrefs {
+    fn default() -> Self {
+        Self { enabled: false, remind_minutes: 5, countdown: true, all_day: false }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DayPrefs {
+    pub enabled: bool,
+    /// Suggest a break after this many minutes of continuous use; 0 = never.
+    pub break_minutes: u32,
+    /// Celebrate milestones (finished Claude Code runs).
+    pub celebrate: bool,
+    /// Your birthday as "MM-DD"; empty = not set.
+    pub birthday: String,
+    /// Seasonal outfits (scarf in winter, Halloween, Christmas…).
+    pub seasonal: bool,
+    /// "north" or "south" — decides when winter is.
+    pub hemisphere: String,
+}
+
+impl Default for DayPrefs {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            break_minutes: 90,
+            celebrate: true,
+            birthday: String::new(),
+            seasonal: true,
+            hemisphere: "north".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OutfitPrefs {
+    /// Mochi may change outfit by itself (overrides the hat you picked meanwhile).
+    pub auto: bool,
+    /// Nightcap between these hours (local, 0–23).
+    pub night: bool,
+    pub night_from: u32,
+    pub night_to: u32,
+    /// Umbrella when it rains, from Open-Meteo for `city`. Off until a city is set.
+    pub weather: bool,
+    pub city: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    /// Gamer headset while a game runs full screen.
+    pub gamer: bool,
+}
+
+impl Default for OutfitPrefs {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            night: true,
+            night_from: 22,
+            night_to: 7,
+            weather: false,
+            city: String::new(),
+            latitude: 0.0,
+            longitude: 0.0,
+            gamer: true,
+        }
+    }
 }
 
 fn default_one() -> f64 {
@@ -167,6 +342,7 @@ impl Default for Settings {
             provider_format: default_provider_format(),
             mochi_hat: default_none(),
             mochi_face: default_none(),
+            mochi_neck: default_none(),
             proactive: false,
             proactive_minutes: default_proactive_minutes(),
             spotify: true,
@@ -184,6 +360,12 @@ impl Default for Settings {
             notifications_quiet_to: default_quiet_to(),
             notifications_muted_apps: Vec::new(),
             language: default_language(),
+            clipboard: ClipboardPrefs::default(),
+            system: SystemPrefs::default(),
+            sessions: SessionPrefs::default(),
+            calendar: CalendarPrefs::default(),
+            day: DayPrefs::default(),
+            outfits: OutfitPrefs::default(),
         }
     }
 }

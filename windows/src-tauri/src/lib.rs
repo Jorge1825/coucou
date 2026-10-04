@@ -1,8 +1,11 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod calendar;
 mod claude;
+mod clipboard;
 mod context;
 mod files;
+mod gitsum;
 mod hooks;
 mod hotkey;
 mod integrations;
@@ -18,7 +21,9 @@ mod secrets;
 mod settings;
 mod notifications;
 mod spotify;
+mod sysmon;
 mod tray;
+mod weather;
 mod win_user;
 
 use std::os::windows::process::CommandExt;
@@ -227,7 +232,7 @@ fn open_in_vscode(path: Option<String>) -> bool {
 /// Our own `where`: walks %PATH% against %PATHEXT%, no shell involved.
 /// Rust quotes arguments correctly for `.cmd`/`.bat` targets since 1.77, so
 /// spawning `code.cmd` directly is safe.
-fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
     let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
     let dirs = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&dirs) {
@@ -450,6 +455,25 @@ async fn notifications_request_access() -> String {
         .unwrap_or_else(|_| "unavailable".into())
 }
 
+/// Files and lines a finished Claude Code run changed (None outside a git repo).
+#[tauri::command]
+async fn git_summary(cwd: String) -> Option<gitsum::GitSummary> {
+    tauri::async_runtime::spawn_blocking(move || gitsum::summary(&cwd)).await.ok().flatten()
+}
+
+/// Calendar Refresh button, or right after a new iCal address was saved.
+#[tauri::command]
+async fn calendar_refresh(app: AppHandle) {
+    calendar::refresh(app).await;
+}
+
+/// Settings → outfits: look a city up for the weather (Open-Meteo, free).
+#[tauri::command]
+async fn weather_find_city(shared: State<'_, Shared>, name: String) -> Result<weather::Place, String> {
+    let lang = shared.settings.lock().unwrap().language.clone();
+    weather::find_city(&name, &lang).await
+}
+
 /// OK on a notification card: every display's island drops it from its list.
 #[tauri::command]
 fn notification_dismiss(app: AppHandle, id: u32) {
@@ -516,8 +540,8 @@ fn create_settings_window(app: &AppHandle) {
     match WebviewWindowBuilder::new(app, "settings", url)
         .additional_browser_args(BROWSER_ARGS)
         .title("Settings — Coucou")
-        .inner_size(560.0, 680.0)
-        .min_inner_size(460.0, 480.0)
+        .inner_size(1040.0, 720.0)
+        .min_inner_size(560.0, 480.0)
         .resizable(true)
         .visible(false)
         .center()
@@ -648,6 +672,9 @@ pub fn run() {
             notifications_request_access,
             notifications_apps,
             notification_dismiss,
+            git_summary,
+            calendar_refresh,
+            weather_find_city,
             open_notification_settings,
             open_settings_window,
             set_paused,
@@ -684,6 +711,10 @@ pub fn run() {
             integrations::start(handle.clone());
             spotify::start(handle.clone());
             notifications::start(handle.clone());
+            sysmon::start(handle.clone());
+            clipboard::start(handle.clone());
+            calendar::start(handle.clone());
+            weather::start(handle.clone());
             Ok(())
         })
         .run(tauri::generate_context!())

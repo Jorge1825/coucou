@@ -142,6 +142,12 @@ export const Bridge = {
   notificationsRequestAccess: () => call<string>("notifications_request_access"),
   /** Apps seen this session, for the per-app mute list. */
   notificationsApps: () => call<string[]>("notifications_apps"),
+  /** Files and lines a finished run changed; null outside a git repository. */
+  gitSummary: (cwd: string) => call<import("./state").GitSummary | null>("git_summary", { cwd }),
+  calendarRefresh: () => call<void>("calendar_refresh"),
+  /** Open-Meteo city lookup for the weather outfit. Rejects with a message. */
+  weatherFindCity: (name: string) =>
+    callOrThrow<{ name: string; country: string; latitude: number; longitude: number }>("weather_find_city", { name }),
   /** Tells every island to drop this notification from its list. */
   notificationDismiss: (id: number) => call<void>("notification_dismiss", { id }),
   /** Windows' own privacy page — only the user can grant access there. */

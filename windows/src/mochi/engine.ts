@@ -7,7 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
-import { drawAccessories, type FaceKind, type HatKind } from "./accessories";
+import { drawAccessories, NO_EXTRAS, type Extras, type FaceKind, type HatKind, type NeckKind } from "./accessories";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -204,6 +204,11 @@ export class BotEngine {
   /** What Mochi wears (chosen in Settings). Mini bots never wear anything. */
   hat: HatKind = "none";
   face: FaceKind = "none";
+  neck: NeckKind = "none";
+  /** Put on by Mochi itself (night, weather, birthday…); wins over `hat` meanwhile. */
+  autoHat: HatKind | null = null;
+  /** Scarf / umbrella / gamer mic chosen by the day (see island/outfits.ts). */
+  autoExtras: Extras = NO_EXTRAS;
 
   /**
    * Spotify is playing: Mochi puts its headphones on, sways to the beat and
@@ -828,8 +833,15 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
-    if (!this.isMini && (this.hat !== "none" || this.face !== "none" || this.music)) {
-      drawAccessories(x, this.hat, this.face, this, R, rx, ry, this.music ? this.musicPulse : null);
+    if (!this.isMini) {
+      const hat = this.autoHat ?? this.hat;
+      const extras: Extras = {
+        ...this.autoExtras,
+        neck: this.autoExtras.neck !== "none" ? this.autoExtras.neck : this.neck,
+      };
+      if (hat !== "none" || this.face !== "none" || this.music || extras.neck !== "none" || extras.umbrella || extras.mic) {
+        drawAccessories(x, hat, this.face, this, R, rx, ry, this.music ? this.musicPulse : null, extras);
+      }
     }
 
     x.restore();

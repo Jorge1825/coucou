@@ -38,6 +38,18 @@ function contextChip(label: string): HTMLElement {
   return chip;
 }
 
+/** Set by the chat view once it exists: sends a prepared question. */
+let externalSubmit: ((query: string, display: string) => void) | null = null;
+
+/**
+ * Asks the chat something prepared elsewhere (the clipboard actions). `display`
+ * is what the history shows — a short label instead of the whole copied text.
+ * The caller switches the island to the chat view.
+ */
+export function askChat(query: string, display: string) {
+  externalSubmit?.(query, display);
+}
+
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const chipRow = h("div", { class: "chip-row" });
   const log = h("div", { class: "chat-log" });
@@ -65,14 +77,14 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   let sending = false;
   let renderedCount = -1;
 
-  async function submit() {
-    const query = input.value.trim();
+  async function submit(preset?: { query: string; display: string }) {
+    const query = preset?.query ?? input.value.trim();
     if (!query || sending) return;
-    input.value = "";
+    if (!preset) input.value = "";
     sending = true;
     Sound.play("send");
 
-    State.chatHistory.push({ id: nextId++, role: "user", content: query });
+    State.chatHistory.push({ id: nextId++, role: "user", content: preset?.display ?? query });
     State.stateOverride = "thinking";
     State.notify();
     onHeightChange();
@@ -103,7 +115,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       if (String(err).includes("cancelled")) {
         // Stopped by the user: take the question back so it can be edited or resent.
         State.chatHistory.pop();
-        input.value = query;
+        if (!preset) input.value = query;
         return;
       }
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
@@ -117,6 +129,8 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       requestAnimationFrame(() => input.focus());
     }
   }
+
+  externalSubmit = (query, display) => void submit({ query, display });
 
   // Nothing is captured until this is pressed — Mochi never looks on its own.
   let capturing = false;

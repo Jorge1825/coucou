@@ -8,7 +8,8 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
-import { SPOTIFY_COLOR, SPOTIFY_ID } from "../core/state";
+import { CALENDAR_COLOR, CALENDAR_ID, SPOTIFY_COLOR, SPOTIFY_ID } from "../core/state";
+import { openEvent, upcoming, whenLabel } from "../island/calendar";
 import { spotifyControl, spotifyPosition } from "../island/spotify";
 import { t } from "../core/i18n";
 
@@ -487,6 +488,38 @@ export function tickSpotifyCard() {
   spotifyLive.time.textContent = `${mmss(pos)} / ${mmss(np.durationMs)}`;
 }
 
+// ── Calendar ──────────────────────────────────────────────────────────────────
+
+function calendarCard(): HTMLElement {
+  const rows = h("div", { class: "int-rows tight" });
+  const events = upcoming().slice(0, 3);
+  if (State.calendarError) {
+    rows.append(h("div", { class: "int-empty", text: State.calendarError }));
+  } else if (events.length === 0) {
+    rows.append(h("div", { class: "int-empty", text: t("Nothing in the next two days") }));
+  }
+  const now = Date.now();
+  events.forEach((e, i) => {
+    const live = e.start <= now && e.end > now;
+    const row = h(
+      "div",
+      { class: i === 0 ? "int-row first" : "int-row" },
+      dot(live ? "#22C55E" : CALENDAR_COLOR, 5),
+      h("span", { class: "int-time", text: e.allDay ? t("All day") : live ? t("Now") : whenLabel(e.start) }),
+      h("span", { class: "int-name", text: e.title }),
+    );
+    if (i === 0) row.style.background = `${CALENDAR_COLOR}14`;
+    if (e.link) {
+      row.append(h("button", { class: "link-btn cal-join", text: t("Join"), onclick: () => openEvent(e) }));
+    }
+    rows.append(row);
+  });
+  const refresh = h("button", {
+    class: "int-more", title: t("Refresh"), onclick: () => void Bridge.calendarRefresh(),
+  }, svg(ICONS.target, 8));
+  return h("div", { class: "int-card" }, header(CALENDAR_COLOR, t("Calendar"), t("Upcoming"), refresh), rows);
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 export interface IntegrationCardHooks {
@@ -522,6 +555,7 @@ export function hasIntegrationData(id: string): boolean {
 
 export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHooks): HTMLElement {
   if (task.id === SPOTIFY_ID) return spotifyCard();
+  if (task.id === CALENDAR_ID) return calendarCard();
   if (task.id === "integration_n8n") {
     const hasActivity = task.steps.length > 0 && (task.state === "finished" || task.state === "error");
     return hooks.detailOpen && hasActivity

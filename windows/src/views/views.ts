@@ -6,6 +6,9 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { SPOTIFY_ID, State, type AgentTask } from "../core/state";
+import {
+  CLIP_ACTIONS, clipActionLabel, clipKind, clipKindLabel, currentClip, type ClipAction,
+} from "../island/clipboard";
 import { Bridge } from "../core/bridge";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
@@ -38,6 +41,10 @@ export interface ViewActions {
   browseNotifications(delta: number): void;
   /** OK on the card: drop the notification shown from the list, then close. */
   dismissNotification(): void;
+  /** Clipboard card: run an action on the copy shown, page through, drop it. */
+  clipAction(action: ClipAction): void;
+  browseClips(delta: number): void;
+  dismissClip(): void;
   openNotificationAccess(): void;
   checkNotificationAccess(): void;
 }
@@ -218,7 +225,8 @@ function buildOverview(actions: ViewActions): ViewHost {
       // VS Code with a live Claude Code session keeps the ticker; every other
       // pill shows its own card, exactly like IntegrationCardView.
       const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
+        task?.source === "claudeCode" &&
+        (task.id !== "integration_claude" || task.state !== "idle" || task.steps.length > 0);
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
@@ -413,11 +421,12 @@ function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title" });
   const asked = h("div", { class: "sub", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis" });
+  const gitLine = h("div", { class: "git-line" });
   const row = h("div", { class: "actions" },
     btn(t("Open terminal"), "primary", () => actions.openTerminal()),
     btn(t("OK"), "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, asked, row)));
+  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, asked, gitLine, row)));
   return {
     el,
     sync() {
@@ -427,7 +436,24 @@ function buildFinished(actions: ViewActions): ViewHost {
       // What it did, not just the last thing it touched; and what it was for.
       title.textContent = task?.summary ?? task?.steps.at(-1) ?? t("Session finished");
       asked.textContent = task?.lastPrompt ? t("For: “{prompt}”", { prompt: task.lastPrompt }) : "";
-      asked.style.display = task?.lastPrompt ? "" : "none";
+      const g = task?.git;
+      // Five lines don't fit the card: with git news, the request shares its line.
+      asked.style.display = task?.lastPrompt && !g ? "" : "none";
+      gitLine.style.display = g ? "" : "none";
+      if (g) {
+        const parts = [
+          g.files ? t("{n} files changed", { n: g.files }) : "",
+          g.untracked ? t("{n} new", { n: g.untracked }) : "",
+        ].filter(Boolean);
+        clear(gitLine);
+        if (task?.lastPrompt) gitLine.append(h("span", { class: "ask", text: asked.textContent ?? "" }));
+        gitLine.append(
+          h("span", { class: "stat", text: parts.join(" · ") }),
+          h("b", { class: "plus", text: `+${g.insertions}` }),
+          h("b", { class: "minus", text: `−${g.deletions}` }),
+        );
+        gitLine.title = g.names.join("\n");
+      }
     },
   };
 }
@@ -615,6 +641,63 @@ function buildNotification(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Clipboard ─────────────────────────────────────────────────────────────────
+
+function buildClipboard(actions: ViewActions): ViewHost {
+  const kind = h("span", { class: "n" });
+  const when = h("span", {});
+  const pager = h("span", { class: "osn-pager" });
+  const prev = h("button", { class: "icon-btn", title: t("Previous"), onclick: () => actions.browseClips(1) },
+    svg(ICONS.chevronLeft, 8, { stroke: 2.4 }));
+  const next = h("button", { class: "icon-btn", title: t("Next"), onclick: () => actions.browseClips(-1) },
+    svg(ICONS.chevronRight, 8, { stroke: 2.4 }));
+  const head = h("div", { class: "who-row osn-head" }, kind, when, h("div", { class: "grow" }), prev, pager, next);
+  const text = h("div", { class: "clip-text" });
+  const row = h("div", { class: "actions" });
+  const emptyTitle = h("div", { class: "title", text: t("Nothing copied yet.") });
+  const emptySub = h("div", { class: "sub" });
+  const filled = stack(116, 16, head, text, row);
+  const empty = stack(116, 16, emptyTitle, emptySub);
+  const el = h("div", { class: "view" }, card("cyan", filled, empty));
+  let rowKey = "";
+  return {
+    el,
+    sync() {
+      const c = currentClip();
+      filled.style.display = c ? "" : "none";
+      empty.style.display = c ? "none" : "";
+      if (!c) {
+        emptySub.textContent = State.settings.clipboard?.enabled
+          ? t("Copy some text and Mochi will offer to explain, summarize, translate or fix it.")
+          : t("The smart clipboard is off — turn it on in Settings.");
+        return;
+      }
+      const k = clipKind(c.text);
+      kind.textContent = clipKindLabel(k);
+      when.textContent = timeAgo(c.at);
+      text.textContent = c.text;
+      text.classList.toggle("mono", k === "code" || k === "error");
+      const many = State.clips.length > 1;
+      for (const x of [prev, pager, next]) x.style.display = many ? "" : "none";
+      pager.textContent = `${State.clipIndex + 1}/${State.clips.length}`;
+      (prev as HTMLButtonElement).disabled = State.clipIndex >= State.clips.length - 1;
+      (next as HTMLButtonElement).disabled = State.clipIndex <= 0;
+      // Buttons only rebuilt when the chosen actions change (a rebuild between
+      // mouse-down and mouse-up would swallow the click).
+      const enabled = CLIP_ACTIONS.filter((a) => State.settings.clipboard?.actions?.includes(a));
+      const key = enabled.join(",");
+      if (key !== rowKey) {
+        rowKey = key;
+        clear(row);
+        for (const a of enabled) {
+          row.append(h("button", { class: "btn secondary osn-btn", text: clipActionLabel(a), onclick: () => actions.clipAction(a) }));
+        }
+        row.append(h("div", { class: "grow" }), btn(t("OK"), "primary", () => actions.dismissClip()));
+      }
+    },
+  };
+}
+
 // ── Placeholders filled in later stages ───────────────────────────────────────
 
 function buildPlaceholder(title: string, sub: string): ViewHost {
@@ -644,6 +727,7 @@ export function buildViews(
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
   map.set("notification", buildNotification(actions));
+  map.set("clipboard", buildClipboard(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("upload", buildUpload(actions));
   map.set("uploading", buildUploading());

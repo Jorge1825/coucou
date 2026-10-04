@@ -3,7 +3,7 @@
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
 
-export type AgentSource = "claudeCode" | "n8n" | "agent" | "spotify";
+export type AgentSource = "claudeCode" | "n8n" | "agent" | "spotify" | "calendar";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {
@@ -21,12 +21,20 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** What the last request did ("Edited 3 files · ran 5 commands"), once it finished. */
   summary?: string | null;
+  /** git changes of the last finished run. */
+  git?: GitSummary | null;
+  /** Claude Code session id behind this pill. */
+  sessionId?: string | null;
+  /** Last hook event (Date.now()), for removing idle extra session pills. */
+  lastEventAt?: number;
   /** What the user asked for in the last request, shortened. */
   lastPrompt?: string | null;
 }
 
 export interface ApprovalInfo {
   requestId: string;
+  /** The pill (Claude Code session) asking. */
+  taskId: string;
   sessionId: string;
   tool: string;
   command: string;
@@ -108,6 +116,7 @@ export interface Settings {
   /** Accessories Mochi wears — see mochi/accessories.ts. */
   mochiHat: string;
   mochiFace: string;
+  mochiNeck: string;
   /** Mochi may interrupt on its own (periodic check-in with the model). */
   proactive: boolean;
   /** Minutes between check-ins. */
@@ -140,7 +149,122 @@ export interface Settings {
   notificationsMutedApps: string[];
   /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
   language: string;
+  clipboard: ClipboardPrefs;
+  system: SystemPrefs;
+  sessions: SessionPrefs;
+  calendar: CalendarPrefs;
+  day: DayPrefs;
+  outfits: OutfitPrefs;
 }
+
+/** Smart clipboard — mirrors ClipboardPrefs in src-tauri/src/settings.rs. */
+export interface ClipboardPrefs {
+  enabled: boolean;
+  suggest: boolean;
+  minChars: number;
+  /** explain / summarize / translate / fix */
+  actions: string[];
+  /** "auto" = the interface language, or a language code. */
+  translateTo: string;
+  history: number;
+  keepMinutes: number;
+}
+
+export interface SystemPrefs {
+  enabled: boolean;
+  /** Percent; 0 = never warn. */
+  batteryLow: number;
+  cpuHigh: number;
+  memoryHigh: number;
+  offline: boolean;
+  react: boolean;
+}
+
+export interface SessionPrefs {
+  separate: boolean;
+  max: number;
+  lingerMinutes: number;
+  gitSummary: boolean;
+}
+
+export interface CalendarPrefs {
+  enabled: boolean;
+  /** Minutes before a meeting; 0 = no banner. */
+  remindMinutes: number;
+  countdown: boolean;
+  allDay: boolean;
+}
+
+export interface DayPrefs {
+  enabled: boolean;
+  /** Minutes of continuous use before suggesting a break; 0 = never. */
+  breakMinutes: number;
+  celebrate: boolean;
+  /** "MM-DD" or empty. */
+  birthday: string;
+  seasonal: boolean;
+  hemisphere: string;
+}
+
+export interface OutfitPrefs {
+  auto: boolean;
+  night: boolean;
+  nightFrom: number;
+  nightTo: number;
+  weather: boolean;
+  city: string;
+  latitude: number;
+  longitude: number;
+  gamer: boolean;
+}
+
+/** Battery, CPU… — see src-tauri/src/sysmon.rs. */
+export interface SystemStatus {
+  battery: number | null;
+  charging: boolean;
+  cpu: number;
+  memory: number;
+  online: boolean;
+  idleSecs: number;
+  game: boolean;
+}
+
+/** A meeting — see src-tauri/src/calendar.rs. */
+export interface CalEvent {
+  title: string;
+  start: number;
+  end: number;
+  allDay: boolean;
+  location: string;
+  link: string | null;
+}
+
+export interface Weather {
+  code: number;
+  temperature: number;
+  rain: boolean;
+  snow: boolean;
+  storm: boolean;
+}
+
+/** One copied text in the clipboard history. */
+export interface ClipItem {
+  id: number;
+  text: string;
+  at: number;
+}
+
+/** What a finished Claude Code run changed — see src-tauri/src/gitsum.rs. */
+export interface GitSummary {
+  files: number;
+  insertions: number;
+  deletions: number;
+  untracked: number;
+  names: string[];
+}
+
+export const CALENDAR_ID = "integration_calendar";
+export const CALENDAR_COLOR = "#4285F4";
 
 /** Keeps a stored opacity inside what still leaves the island usable. */
 export function clampOpacity(v: unknown, min: number): number {
@@ -199,6 +323,7 @@ export const DEFAULT_SETTINGS: Settings = {
   providerFormat: "openai",
   mochiHat: "none",
   mochiFace: "none",
+  mochiNeck: "none",
   proactive: false,
   proactiveMinutes: 30,
   spotify: true,
@@ -216,6 +341,18 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationsQuietTo: 8,
   notificationsMutedApps: [],
   language: "auto",
+  clipboard: {
+    enabled: false, suggest: true, minChars: 20,
+    actions: ["explain", "summarize", "translate", "fix"], translateTo: "auto", history: 15, keepMinutes: 30,
+  },
+  system: { enabled: true, batteryLow: 20, cpuHigh: 90, memoryHigh: 90, offline: true, react: true },
+  sessions: { separate: true, max: 4, lingerMinutes: 30, gitSummary: true },
+  calendar: { enabled: false, remindMinutes: 5, countdown: true, allDay: false },
+  day: { enabled: true, breakMinutes: 90, celebrate: true, birthday: "", seasonal: true, hemisphere: "north" },
+  outfits: {
+    auto: true, night: true, nightFrom: 22, nightTo: 7,
+    weather: false, city: "", latitude: 0, longitude: 0, gamer: true,
+  },
 };
 
 type Listener = () => void;
@@ -251,6 +388,17 @@ class AppState {
   pendingApproval: ApprovalInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
+
+  /** Latest machine readings (null until the first one). */
+  system: SystemStatus | null = null;
+  /** Upcoming meetings, soonest first. */
+  calendar: CalEvent[] = [];
+  calendarError: string | null = null;
+  calendarConfigured = false;
+  weather: Weather | null = null;
+  /** Clipboard history, newest first, and which one the card shows. */
+  clips: ClipItem[] = [];
+  clipIndex = 0;
 
   /** Windows notifications received this session, newest first (max 20). */
   osNotifications: OsNotification[] = [];
@@ -373,6 +521,22 @@ class AppState {
     if (idx < 0) return;
     this.tasks.splice(idx, 1);
     if (this.focusId === id) this.focusId = this.tasks[0]?.id ?? "integration_claude";
+    this.notify();
+  }
+
+  /**
+   * A pill for one more Claude Code session (the first one uses the VS Code
+   * pill). Placed after VS Code and the other sessions.
+   */
+  upsertSessionPill(id: string, name: string, color: string, cwd: string) {
+    if (this.tasks.some((t) => t.id === id)) return;
+    let at = this.tasks.findIndex((t) => t.id === "integration_claude") + 1;
+    while (this.tasks[at]?.id.startsWith("claude_")) at++;
+    this.tasks.splice(at, 0, {
+      id, name, color,
+      state: "idle", stepIndex: 0, steps: [],
+      source: "claudeCode", isIntegration: false, sessionCwd: cwd || null,
+    });
     this.notify();
   }
 
