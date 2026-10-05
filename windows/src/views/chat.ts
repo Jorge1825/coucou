@@ -119,6 +119,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         return;
       }
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.noteKind = null;
       State.view = "note";
       Sound.play("error");
     } finally {
@@ -143,6 +144,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       Sound.play("blip");
     } catch (err) {
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.noteKind = null;
       State.view = "note";
       Sound.play("error");
     } finally {
@@ -162,7 +164,9 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       e.preventDefault();
       void submit();
     }
-    e.stopPropagation(); // Escape closes the island, not the chat
+    // Typing keys stay inside the field, but Escape must reach the island: now that
+    // the chat stays open while you type, it is the way to close it.
+    if ((e as KeyboardEvent).key !== "Escape") e.stopPropagation();
   });
 
   return {

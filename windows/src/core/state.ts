@@ -131,6 +131,8 @@ export interface Settings {
   idleOpacity: number;
   /** Global shortcut that opens the chat, e.g. "Ctrl+Alt+M"; empty = none. */
   chatHotkey: string;
+  /** Sites Mochi's hidden browser may read; empty = off. */
+  browserSites: string[];
   /** Seconds in the compact island before it hides completely; 0 = never. */
   hideAfter: number;
   /** Show Windows notifications in the island. */
@@ -149,6 +151,14 @@ export interface Settings {
   notificationsMutedApps: string[];
   /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
   language: string;
+  /** Watch sites and Dokploy instances and alert when one fails. */
+  monitor: boolean;
+  /** Minutes between checks, 1…60. */
+  monitorMinutes: number;
+  /** Full URLs of the websites to watch. */
+  monitorSites: string[];
+  /** Dokploy instances; each API key is in the Credential Manager, named after the instance. */
+  monitorDokploy: { name: string; url: string }[];
   clipboard: ClipboardPrefs;
   system: SystemPrefs;
   sessions: SessionPrefs;
@@ -333,6 +343,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cardOpacity: 1,
   idleOpacity: 1,
   chatHotkey: "Ctrl+Alt+M",
+  browserSites: [],
   hideAfter: 0,
   notifications: true,
   notificationsMuted: false,
@@ -343,6 +354,10 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationsQuietTo: 8,
   notificationsMutedApps: [],
   language: "auto",
+  monitor: false,
+  monitorMinutes: 5,
+  monitorSites: [],
+  monitorDokploy: [],
   clipboard: {
     enabled: false, suggest: true, minChars: 20,
     actions: ["explain", "summarize", "translate", "fix"], translateTo: "auto", history: 15, keepMinutes: 30, screens: "all",
@@ -385,6 +400,8 @@ class AppState {
   /** Screenshot the user asked for; goes out with the next chat message, once. */
   pendingScreen: { path: string } | null = null;
   noteMessage: string | null = null;
+  /** What produced the note: "alert" / "recovered" get their own look; null = plain. */
+  noteKind: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;

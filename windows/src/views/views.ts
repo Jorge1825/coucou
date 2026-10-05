@@ -474,11 +474,17 @@ function buildConfused(): ViewHost {
 
 function buildNote(): ViewHost {
   const title = h("div", { class: "title" });
-  const el = h("div", { class: "view" }, card(null, h("div", { class: "stack", style: "padding:0 18px 0 98px" }, title)));
+  const body = card(null, h("div", { class: "stack", style: "padding:0 18px 0 98px" }, title));
+  const el = h("div", { class: "view" }, body);
   return {
     el,
     sync() {
       title.textContent = State.noteMessage ?? "";
+      // A watched site or service going down is red, coming back is green.
+      const wash: Wash = State.noteKind === "alert" ? "red" : State.noteKind === "recovered" ? "green" : null;
+      body.classList.toggle("wash", wash !== null);
+      if (wash) body.style.setProperty("--wash", washRGBA(wash));
+      else body.style.removeProperty("--wash");
     },
   };
 }

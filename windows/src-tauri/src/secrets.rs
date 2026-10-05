@@ -25,8 +25,16 @@ pub const KNOWN_KEYS: &[&str] = &[
     "calendar-ics",
 ];
 
+/// One key per monitored Dokploy instance, named after it (see monitor.rs).
+const DOKPLOY_PREFIX: &str = "dokploy-key:";
+
+fn allowed(key: &str) -> bool {
+    KNOWN_KEYS.contains(&key)
+        || (key.len() > DOKPLOY_PREFIX.len() && key.len() <= 120 && key.starts_with(DOKPLOY_PREFIX))
+}
+
 fn entry(key: &str) -> Option<Entry> {
-    if !KNOWN_KEYS.contains(&key) {
+    if !allowed(key) {
         return None;
     }
     Entry::new(SERVICE, key).ok()

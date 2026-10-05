@@ -63,6 +63,10 @@ pub struct Settings {
     /// Global shortcut that opens the chat; empty = none.
     #[serde(default = "default_chat_hotkey")]
     pub chat_hotkey: String,
+    /// Sites Mochi's hidden browser may read, as bare domains. Empty = the
+    /// `read_page` tool is off.
+    #[serde(default)]
+    pub browser_sites: Vec<String>,
     /// Seconds in the compact island before it hides completely; 0 = never.
     /// Never by default: a fully hidden island is easy to lose.
     #[serde(default)]
@@ -96,6 +100,19 @@ pub struct Settings {
     /// Mochi's chat answers in it too.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Watch the sites and Dokploy instances below and alert when one fails.
+    /// Off by default: it makes background requests to the URLs listed here.
+    #[serde(default)]
+    pub monitor: bool,
+    /// Minutes between checks when `monitor` is on (clamped to 1…60).
+    #[serde(default = "default_monitor_minutes")]
+    pub monitor_minutes: u32,
+    /// Full URLs of the websites to watch.
+    #[serde(default)]
+    pub monitor_sites: Vec<String>,
+    /// Dokploy instances to watch. Each one's API key is in the Credential Manager.
+    #[serde(default)]
+    pub monitor_dokploy: Vec<DokployTarget>,
     /// Smart clipboard: suggestions when text is copied, and a short history.
     #[serde(default)]
     pub clipboard: ClipboardPrefs,
@@ -115,6 +132,21 @@ pub struct Settings {
     #[serde(default)]
     pub outfits: OutfitPrefs,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DokployTarget {
+    /// Also names the Credential Manager entry that holds its API key.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+fn default_monitor_minutes() -> u32 {
+    5
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -354,6 +386,7 @@ impl Default for Settings {
             card_opacity: 1.0,
             idle_opacity: 1.0,
             chat_hotkey: default_chat_hotkey(),
+            browser_sites: Vec::new(),
             hide_after: 0,
             notifications: true,
             notifications_muted: false,
@@ -364,6 +397,10 @@ impl Default for Settings {
             notifications_quiet_to: default_quiet_to(),
             notifications_muted_apps: Vec::new(),
             language: default_language(),
+            monitor: false,
+            monitor_minutes: default_monitor_minutes(),
+            monitor_sites: Vec::new(),
+            monitor_dokploy: Vec::new(),
             clipboard: ClipboardPrefs::default(),
             system: SystemPrefs::default(),
             sessions: SessionPrefs::default(),

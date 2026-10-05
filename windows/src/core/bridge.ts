@@ -29,6 +29,26 @@ export interface MemoryNote {
   source: string;
 }
 
+export interface GoalStep {
+  text: string;
+  done: boolean;
+}
+
+export interface Goal {
+  id: number;
+  title: string;
+  /** YYYY-MM-DD, or null. */
+  due: string | null;
+  steps: GoalStep[];
+  done: boolean;
+}
+
+export interface MonitorResult {
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
 export interface Reminder {
   id: number;
   text: string;
@@ -108,6 +128,12 @@ export const Bridge = {
     callOrThrow<{ text: string; remembered: boolean }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
   chatCancel: () => call<void>("chat_cancel"),
+  goalsList: () => call<Goal[]>("goals_list"),
+  goalsAdd: (title: string, due: string | null) => callOrThrow<number>("goals_add", { title, due }),
+  goalsComplete: (id: number) => call<string>("goals_complete", { id }),
+  goalsDelete: (id: number) => call<void>("goals_delete", { id }),
+  /** "Test now" for the monitoring section: one check of everything listed. */
+  monitorCheckNow: () => call<MonitorResult[]>("monitor_check_now"),
   remindersList: () => call<Reminder[]>("reminders_list"),
   remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
   memoryList: () => call<MemoryNote[]>("memory_list"),
@@ -210,9 +236,23 @@ export interface DragDropPayload {
 /** Files dragged onto the island. Only reaches us when the window takes the mouse. */
 export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   if (!IS_TAURI) return () => {};
-  return getCurrentWebview().onDragDropEvent((event) => {
-    handler(event.payload as DragDropPayload);
-  });
+  // Two sources — the island's own OLE drop target (dropzone.rs) and Tauri's —
+  // because either can end up the one Windows asks. A drop must only count once.
+  let lastDrop = 0;
+  const deliver = (e: DragDropPayload) => {
+    if (e.type === "drop") {
+      const now = performance.now();
+      if (now - lastDrop < 600) return;
+      lastDrop = now;
+    }
+    handler(e);
+  };
+  const offTauri = await getCurrentWebview().onDragDropEvent((event) => deliver(event.payload as DragDropPayload));
+  const offIsland = await getCurrentWebviewWindow().listen<DragDropPayload>("island-drag", (e) => deliver(e.payload));
+  return () => {
+    offTauri();
+    offIsland();
+  };
 }
 
 /**

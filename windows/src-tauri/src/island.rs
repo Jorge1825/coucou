@@ -19,11 +19,7 @@ use tauri::{
 };
 
 use windows::Win32::Foundation::{HWND, POINT};
-use windows::core::BOOL;
-use windows::Win32::Foundation::LPARAM;
-use windows::Win32::System::Ole::RevokeDragDrop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetClassNameW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW,
@@ -530,26 +526,11 @@ fn cursor_physical() -> Option<(f64, f64)> {
 ///
 /// Cheap and idempotent, so it is simply re-run whenever a drag might be starting.
 pub fn unblock_webview_drops(app: &AppHandle) {
-    let labels = all().into_iter().map(|iw| iw.label.clone()).chain(["settings".to_string()]);
-    for label in labels {
-        let Some(win) = app.get_webview_window(&label) else { continue };
+    for iw in all() {
+        let Some(win) = app.get_webview_window(&iw.label) else { continue };
         let Some(hwnd) = hwnd_of(&win) else { continue };
-        unsafe {
-            let _ = EnumChildWindows(Some(hwnd), Some(revoke_render_widget), LPARAM(0));
-        }
+        crate::dropzone::install(app, &iw.label, hwnd);
     }
-}
-
-unsafe extern "system" fn revoke_render_widget(hwnd: HWND, _: LPARAM) -> BOOL {
-    let mut name = [0u16; 64];
-    let len = unsafe { GetClassNameW(hwnd, &mut name) };
-    if len > 0 {
-        let class = String::from_utf16_lossy(&name[..len as usize]);
-        if class == "Chrome_RenderWidgetHostHWND" {
-            let _ = unsafe { RevokeDragDrop(hwnd) };
-        }
-    }
-    true.into()
 }
 
 /// Re-runs `unblock_webview_drops` now and again shortly after, because WebView2

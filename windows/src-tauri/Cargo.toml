@@ -22,6 +22,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
+# Same version as `windows`: the #[implement] macro refers to this crate by name.
+windows-core = "0.61"
 windows = { version = "0.61", features = [
   "ApplicationModel",
   "Foundation",
@@ -33,6 +35,7 @@ windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Imaging",
   "Win32_Networking_NetworkListManager",
@@ -42,6 +45,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_Power",
+  "Win32_System_SystemServices",
   "Win32_System_Registry",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",

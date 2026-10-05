@@ -610,6 +610,29 @@ export class Island {
     }
   }
 
+  /**
+   * The chat is somewhere you stay: it must not close under you on the auto-close
+   * timer. It is held open while there is a conversation, an answer is on its way,
+   * or the cursor is in its text field in a focused window. Once none of that is
+   * true the usual countdown starts again. Approvals keep their own pin.
+   */
+  private updateChatHold() {
+    const inChat = State.mode === "expanded" && State.view === "prompt";
+    const field = document.activeElement;
+    const typing =
+      document.hasFocus() && field instanceof HTMLInputElement && this.contentEl.contains(field);
+    const hold = inChat && (State.chatHistory.length > 0 || State.stateOverride === "thinking" || typing);
+
+    const pinned = hold || State.isPinned;
+    if (this.fsm.pinned === pinned) return;
+    this.fsm.pinned = pinned;
+    if (pinned) {
+      this.fsm.cancelTimers();
+    } else if (this.fsm.state === "home" && !this.wasInIsland) {
+      this.fsm.mouseLeft(); // nobody is over it any more: let the countdown run
+    }
+  }
+
   /** A reaction with one of Mochi's emotes — only worth the frames while it can be seen. */
   react(emote: BotEmoteName, duration?: number) {
     if (State.paused || State.mode === "hidden") return;
@@ -669,6 +692,7 @@ export class Island {
       .catch((err) => {
         UploadSeq.deactivate();
         State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        State.noteKind = null;
         this.engine.animateMorph(0);
         this.setView("note");
         Sound.play("error");
@@ -878,6 +902,12 @@ export class Island {
     });
 
     this.fsm.onHomeCollapseTimer = (deadline) => this.syncCountdown(deadline);
+
+    for (const type of ["focusin", "focusout"]) {
+      document.addEventListener(type, () => this.updateChatHold());
+    }
+    window.addEventListener("focus", () => this.updateChatHold());
+    window.addEventListener("blur", () => this.updateChatHold());
 
     // The chat (or anything else) asking Mochi to show a feeling.
     window.addEventListener("mochi-react", (e) => {
@@ -1276,6 +1306,7 @@ export class Island {
   // ── DOM sync ────────────────────────────────────────────────────────────────
 
   private syncDom() {
+    this.updateChatHold();
     const expanded = State.mode === "expanded";
     const greetingActive = expanded && State.view === "greeting";
 

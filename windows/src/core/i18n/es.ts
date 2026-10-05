@@ -274,6 +274,46 @@ export const ES: Record<string, string> = {
   "Hide completely": "Ocultar del todo",
   "when idle in the compact island": "si se queda quieto en modo compacto",
   "When hidden, a small bar at the edge of the screen marks where to point to bring it back.": "Cuando está oculto, una barrita en el borde de la pantalla marca dónde apuntar para traerlo de vuelta.",
+  "Goals": "Objetivos",
+  "Mochi keeps track of what you are working towards. Tell it a goal in the chat and it records it, ticks steps off as you report progress, and keeps your deadlines in mind.": "Mochi lleva la cuenta de lo que quieres lograr. Cuéntale un objetivo en el chat y lo apunta, va marcando pasos según le cuentes tus avances y tiene presentes tus fechas límite.",
+  "No goals yet. Tell Mochi what you want to achieve, or add one here.": "Aún no hay objetivos. Cuéntale a Mochi qué quieres lograr, o añade uno aquí.",
+  "A goal, e.g. Pass the calculus exam": "Un objetivo, p. ej. Aprobar el examen de cálculo",
+  "Mark as done": "Marcar como hecho",
+  "Deadline (optional)": "Fecha límite (opcional)",
+  "no date": "sin fecha",
+  "Browser": "Navegador",
+  "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Sitios web que Mochi puede abrir en su propio navegador oculto y privado para buscar cosas por ti, como ofertas de trabajo. Solo lee: nunca inicia sesión, hace clic ni envía nada. Un sitio por línea; vacío lo deja apagado.",
+  "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi puede leer: {sites}. Reinicia Coucou después de añadir el primer sitio.",
+  "Off: no sites listed.": "Apagado: no hay sitios en la lista.",
+  // ── Settings: monitoring ──
+  "Monitoring":
+    "Monitoreo",
+  "Mochi checks your websites and Dokploy servers and interrupts you when one goes down or a service fails, and again when it is back. It only contacts the addresses you list here, and alerts ignore quiet hours. Off by default.":
+    "Mochi revisa tus sitios web y servidores Dokploy y te interrumpe cuando uno se cae o falla un servicio, y de nuevo cuando vuelve. Solo contacta las direcciones que listes aquí y las alertas ignoran las horas de silencio. Desactivado por defecto.",
+  "Watch my sites and servers":
+    "Vigilar mis sitios y servidores",
+  "between checks":
+    "entre revisiones",
+  "1 minute":
+    "1 minuto",
+  "Websites to watch, one URL per line. A site counts as down when it does not answer or returns a server error (5xx).":
+    "Sitios web a vigilar, una URL por línea. Un sitio cuenta como caído si no responde o devuelve un error del servidor (5xx).",
+  "Dokploy servers. In Dokploy, create an API key under Settings → Profile → API/CLI; it is stored in the Windows Credential Manager, never in a file.":
+    "Servidores Dokploy. En Dokploy, crea una clave de API en Ajustes → Perfil → API/CLI; se guarda en el Administrador de credenciales de Windows, nunca en un archivo.",
+  "No Dokploy servers yet.":
+    "Aún no hay servidores Dokploy.",
+  "Name, e.g. vps-1":
+    "Nombre, p. ej. vps-1",
+  "A name, a URL and an API key are needed.":
+    "Hacen falta un nombre, una URL y una clave de API.",
+  "That name is already used.":
+    "Ese nombre ya está en uso.",
+  "Test now":
+    "Probar ahora",
+  "Checking…":
+    "Comprobando…",
+  "Nothing to check: list a site or a Dokploy server first.":
+    "Nada que comprobar: añade primero un sitio o un servidor Dokploy.",
 
   // ── Windows notifications ──
   "Notifications": "Notificaciones",

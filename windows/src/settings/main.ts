@@ -1083,6 +1083,107 @@ function formatDue(due: string): string {
 }
 
 /** What Mochi may do on its own: pending reminders and unprompted check-ins. */
+/** "https://www.indeed.com/jobs" → "indeed.com"; null when it isn't a domain. */
+function siteOf(input: string): string | null {
+  const s = input.trim().toLowerCase().replace(/^https?:\/\//, "").split(/[/?#]/)[0].replace(/^www\./, "");
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s) ? s : null;
+}
+
+function browserSection(): HTMLElement {
+  const box = h("textarea", {
+    rows: "3",
+    placeholder: "indeed.com\ncomputrabajo.com",
+    spellcheck: "false",
+    style: "width:100%;box-sizing:border-box;resize:vertical",
+  }) as HTMLTextAreaElement;
+  box.value = settings.browserSites.join("\n");
+  const note = h("div", { class: "hint" });
+  const show = () => {
+    note.textContent = settings.browserSites.length
+      ? t("Mochi may read: {sites}. Restart Coucou after adding the first site.", { sites: settings.browserSites.join(", ") })
+      : t("Off: no sites listed.");
+  };
+  show();
+  box.addEventListener("change", () => {
+    const sites = [...new Set(box.value.split(/[\s,;]+/).map(siteOf).filter((s): s is string => s !== null))];
+    settings.browserSites = sites;
+    box.value = sites.join("\n");
+    show();
+    void save();
+  });
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Browser") })),
+    h("div", { class: "hint", text: t("Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.") }),
+    box,
+    note,
+  );
+}
+
+function goalsSection(): HTMLElement {
+  const list = h("div", { class: "reminder-list" });
+  const note = h("span", { class: "hint" });
+
+  async function refresh() {
+    const goals = ((await Bridge.goalsList()) ?? []).filter((g) => !g.done);
+    clear(list);
+    if (goals.length === 0) {
+      list.append(h("div", { class: "hint", text: t("No goals yet. Tell Mochi what you want to achieve, or add one here.") }));
+      return;
+    }
+    for (const g of goals) {
+      const done = g.steps.filter((s) => s.done).length;
+      const progress = g.steps.length ? `  ·  ${done}/${g.steps.length}` : "";
+      list.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: g.due ?? t("no date") }),
+          h("span", { class: "what", text: `${g.title}${progress}` }),
+          h("button", {
+            title: t("Mark as done"),
+            text: "✓",
+            onclick: async () => { await Bridge.goalsComplete(g.id); void refresh(); },
+          }),
+          h("button", {
+            title: t("Delete"),
+            text: "×",
+            onclick: async () => { await Bridge.goalsDelete(g.id); void refresh(); },
+          }),
+        ),
+      );
+    }
+  }
+  void refresh();
+  // Mochi adds and updates them from the chat while this window is open.
+  window.setInterval(() => void refresh(), 15000);
+
+  const title = h("input", { type: "text", placeholder: t("A goal, e.g. Pass the calculus exam"), style: "flex:1 1 auto;min-width:0" }) as HTMLInputElement;
+  const due = h("input", { type: "date", title: t("Deadline (optional)") }) as HTMLInputElement;
+  const add = h("button", { text: t("Add") });
+  add.addEventListener("click", async () => {
+    if (!title.value.trim()) return;
+    try {
+      await Bridge.goalsAdd(title.value, due.value || null);
+      title.value = "";
+      due.value = "";
+      note.textContent = "";
+      void refresh();
+    } catch (err) {
+      note.textContent = String(err).replace(/^Error:\s*/, "");
+    }
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Goals") })),
+    h("div", { class: "hint", text: t("Mochi keeps track of what you are working towards. Tell it a goal in the chat and it records it, ticks steps off as you report progress, and keeps your deadlines in mind.") }),
+    list,
+    h("div", { class: "row" }, title, due, add),
+    note,
+  );
+}
+
 function remindersSection(): HTMLElement {
   const list = h("div", { class: "reminder-list" });
 
@@ -1137,6 +1238,137 @@ function remindersSection(): HTMLElement {
   );
 }
 
+// ── Monitoring section ────────────────────────────────────────────────────────
+
+/** "example.com/" → "https://example.com"; null when it can't be a web address. */
+function urlOf(input: string): string | null {
+  const s = input.trim().replace(/\/+$/, "");
+  if (!s || /\s/.test(s)) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? null : `https://${s}`;
+}
+
+function monitorSection(): HTMLElement {
+  const sites = h("textarea", {
+    rows: "3",
+    placeholder: "https://mysite.com\nhttps://api.mysite.com/health",
+    spellcheck: "false",
+    style: "width:100%;box-sizing:border-box;resize:vertical",
+  }) as HTMLTextAreaElement;
+  sites.value = settings.monitorSites.join("\n");
+  sites.addEventListener("change", () => {
+    const urls = [...new Set(sites.value.split(/[\s,;]+/).map(urlOf).filter((s): s is string => s !== null))];
+    settings.monitorSites = urls;
+    sites.value = urls.join("\n");
+    void save();
+  });
+
+  const minutes = h("select", {}) as HTMLSelectElement;
+  for (const m of [1, 5, 10, 15, 30, 60]) {
+    minutes.append(h("option", { value: String(m), text: m === 1 ? t("1 minute") : m < 60 ? t("{n} minutes", { n: m }) : t("1 hour") }));
+  }
+  minutes.value = String(settings.monitorMinutes);
+  minutes.addEventListener("change", () => {
+    settings.monitorMinutes = Number(minutes.value) || 5;
+    void save();
+  });
+
+  // Dokploy instances: the list is plain settings, each API key sits in the Credential Manager.
+  const servers = h("div", { class: "reminder-list" });
+  const note = h("span", { class: "hint" });
+  const keyOf = (name: string) => `dokploy-key:${name.trim()}`;
+
+  function drawServers() {
+    clear(servers);
+    if (settings.monitorDokploy.length === 0) {
+      servers.append(h("div", { class: "hint", text: t("No Dokploy servers yet.") }));
+      return;
+    }
+    settings.monitorDokploy.forEach((d, i) => {
+      servers.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: d.name }),
+          h("span", { class: "what", text: d.url }),
+          h("button", {
+            title: t("Remove"),
+            text: "×",
+            onclick: async () => {
+              try { await Bridge.secretClear(keyOf(d.name)); } catch { /* nothing stored */ }
+              settings.monitorDokploy.splice(i, 1);
+              void save();
+              drawServers();
+            },
+          }),
+        ),
+      );
+    });
+  }
+  drawServers();
+
+  const name = h("input", { type: "text", placeholder: t("Name, e.g. vps-1"), style: "flex:0 1 130px;min-width:0", spellcheck: "false" }) as HTMLInputElement;
+  const url = h("input", { type: "text", placeholder: "https://dokploy.mysite.com", style: "flex:1 1 auto;min-width:0", spellcheck: "false" }) as HTMLInputElement;
+  const key = h("input", { type: "password", placeholder: t("API key"), style: "flex:1 1 auto;min-width:0", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
+  const add = h("button", { text: t("Add") });
+  add.addEventListener("click", async () => {
+    const n = name.value.trim();
+    const u = urlOf(url.value);
+    const k = key.value.trim();
+    if (!n || !u || !k) { note.textContent = t("A name, a URL and an API key are needed."); return; }
+    if (settings.monitorDokploy.some((d) => d.name.trim() === n)) { note.textContent = t("That name is already used."); return; }
+    try {
+      await Bridge.secretSet(keyOf(n), k);
+      settings.monitorDokploy.push({ name: n, url: u });
+      void save();
+      name.value = ""; url.value = ""; key.value = ""; note.textContent = "";
+      drawServers();
+    } catch (err) {
+      note.textContent = t("Could not save: {error}", { error: String(err).replace(/^Error:\s*/, "") });
+    }
+  });
+
+  // One-off check so a typo shows up now, not at the first alert.
+  const results = h("div", { class: "reminder-list" });
+  const test = h("button", { text: t("Test now") });
+  test.addEventListener("click", async () => {
+    clear(results);
+    results.append(h("div", { class: "hint", text: t("Checking…") }));
+    const found = (await Bridge.monitorCheckNow()) ?? [];
+    clear(results);
+    if (found.length === 0) {
+      results.append(h("div", { class: "hint", text: t("Nothing to check: list a site or a Dokploy server first.") }));
+    }
+    for (const r of found) {
+      results.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: r.ok ? "✓" : "✗" }),
+          h("span", { class: "what", text: r.ok ? r.label : `${r.label}: ${r.detail}` }),
+        ),
+      );
+    }
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Monitoring") })),
+    h("div", { class: "hint", text: t("Mochi checks your websites and Dokploy servers and interrupts you when one goes down or a service fails, and again when it is back. It only contacts the addresses you list here, and alerts ignore quiet hours. Off by default.") }),
+    h("div", { class: "row" },
+      h("label", { text: t("Watch my sites and servers") }),
+      toggle(settings.monitor, (v) => { settings.monitor = v; void save(); }),
+      minutes,
+      h("span", { class: "hint", text: t("between checks") }),
+    ),
+    h("div", { class: "hint", text: t("Websites to watch, one URL per line. A site counts as down when it does not answer or returns a server error (5xx).") }),
+    sites,
+    h("div", { class: "hint", text: t("Dokploy servers. In Dokploy, create an API key under Settings → Profile → API/CLI; it is stored in the Windows Credential Manager, never in a file.") }),
+    servers,
+    h("div", { class: "row" }, name, url, key, add),
+    note,
+    h("div", { class: "row" }, test),
+    results,
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1183,9 +1415,9 @@ async function main() {
         },
         {
           id: "productivity", label: t("Productivity"), icon: ICONS.timer,
-          sections: [calendarSection(ctx), clipboardSection(ctx), memorySection()],
+          sections: [calendarSection(ctx), clipboardSection(ctx), memorySection(), goalsSection()],
         },
-        { id: "integrations", label: t("Integrations"), icon: ICONS.stack, sections: [integrationsSection(present)] },
+        { id: "integrations", label: t("Integrations"), icon: ICONS.stack, sections: [integrationsSection(present), browserSection(), monitorSection()] },
       ],
     ),
   );

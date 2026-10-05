@@ -274,6 +274,46 @@ export const RU: Record<string, string> = {
   "Hide completely": "Скрывать полностью",
   "when idle in the compact island": "в компактном режиме без действий",
   "When hidden, a small bar at the edge of the screen marks where to point to bring it back.": "Когда остров скрыт, небольшая полоска у края экрана показывает, куда навести мышь, чтобы вернуть его.",
+  "Goals": "Цели",
+  "Mochi keeps track of what you are working towards. Tell it a goal in the chat and it records it, ticks steps off as you report progress, and keeps your deadlines in mind.": "Mochi помнит, к чему вы идёте. Расскажите о цели в чате — он запишет её, будет отмечать шаги по мере вашего прогресса и учитывать сроки.",
+  "No goals yet. Tell Mochi what you want to achieve, or add one here.": "Пока нет целей. Расскажите Mochi, чего хотите добиться, или добавьте цель здесь.",
+  "A goal, e.g. Pass the calculus exam": "Цель, например: сдать экзамен по матанализу",
+  "Mark as done": "Отметить выполненным",
+  "Deadline (optional)": "Срок (необязательно)",
+  "no date": "без срока",
+  "Browser": "Браузер",
+  "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Сайты, которые Mochi может открывать в собственном скрытом приватном браузере, чтобы искать для вас информацию, например вакансии. Он только читает: не входит в аккаунты, не нажимает и ничего не отправляет. По одному сайту в строке; пусто — отключено.",
+  "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi может читать: {sites}. Перезапустите Coucou после добавления первого сайта.",
+  "Off: no sites listed.": "Выключено: список сайтов пуст.",
+  // ── Settings: monitoring ──
+  "Monitoring":
+    "Мониторинг",
+  "Mochi checks your websites and Dokploy servers and interrupts you when one goes down or a service fails, and again when it is back. It only contacts the addresses you list here, and alerts ignore quiet hours. Off by default.":
+    "Mochi проверяет ваши сайты и серверы Dokploy и прерывает вас, когда что-то упало или сервис сломался, а затем сообщает о восстановлении. Он обращается только к указанным здесь адресам, а оповещения игнорируют тихие часы. По умолчанию выключено.",
+  "Watch my sites and servers":
+    "Следить за моими сайтами и серверами",
+  "between checks":
+    "между проверками",
+  "1 minute":
+    "1 минута",
+  "Websites to watch, one URL per line. A site counts as down when it does not answer or returns a server error (5xx).":
+    "Сайты для наблюдения, по одному URL в строке. Сайт считается недоступным, если не отвечает или возвращает ошибку сервера (5xx).",
+  "Dokploy servers. In Dokploy, create an API key under Settings → Profile → API/CLI; it is stored in the Windows Credential Manager, never in a file.":
+    "Серверы Dokploy. В Dokploy создайте API-ключ в разделе Настройки → Профиль → API/CLI; он хранится в Диспетчере учётных данных Windows, а не в файле.",
+  "No Dokploy servers yet.":
+    "Серверов Dokploy пока нет.",
+  "Name, e.g. vps-1":
+    "Имя, например vps-1",
+  "A name, a URL and an API key are needed.":
+    "Нужны имя, URL и API-ключ.",
+  "That name is already used.":
+    "Это имя уже используется.",
+  "Test now":
+    "Проверить сейчас",
+  "Checking…":
+    "Проверка…",
+  "Nothing to check: list a site or a Dokploy server first.":
+    "Нечего проверять: сначала добавьте сайт или сервер Dokploy.",
 
   // ── Windows notifications ──
   "Notifications": "Уведомления",

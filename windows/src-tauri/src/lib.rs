@@ -1,14 +1,18 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod browser;
 mod calendar;
 mod claude;
 mod clipboard;
 mod context;
+mod dropzone;
 mod files;
+mod goals;
 mod gitsum;
 mod hooks;
 mod hotkey;
 mod integrations;
+mod monitor;
 mod island;
 mod log;
 mod memory;
@@ -21,6 +25,7 @@ mod secrets;
 mod settings;
 mod notifications;
 mod spotify;
+mod sysinfo;
 mod sysmon;
 mod tray;
 mod weather;
@@ -373,6 +378,34 @@ fn reminders_delete(id: u64) -> Result<(), String> {
     reminders::delete(id)
 }
 
+/// "Test now" in Settings: checks everything listed once, without touching alert state.
+#[tauri::command]
+async fn monitor_check_now(shared: State<'_, Shared>) -> Result<Vec<monitor::CheckResult>, String> {
+    let settings = shared.settings.lock().unwrap().clone();
+    Ok(monitor::check_now(&settings).await)
+}
+
+/// The user's goals, for the settings window.
+#[tauri::command]
+fn goals_list() -> Vec<goals::Goal> {
+    goals::list()
+}
+
+#[tauri::command]
+fn goals_add(title: String, due: Option<String>) -> Result<u64, String> {
+    goals::add(&title, due.as_deref(), &[])
+}
+
+#[tauri::command]
+fn goals_complete(id: u64) -> Result<String, String> {
+    goals::update(id, goals::Change::Complete)
+}
+
+#[tauri::command]
+fn goals_delete(id: u64) -> Result<(), String> {
+    goals::delete(id)
+}
+
 /// Everything Mochi remembers, oldest first, for the settings window.
 #[tauri::command]
 fn memory_list() -> Vec<memory::Note> {
@@ -657,6 +690,11 @@ pub fn run() {
             memory_delete,
             memory_clear,
             reminders_list,
+            monitor_check_now,
+            goals_list,
+            goals_add,
+            goals_complete,
+            goals_delete,
             reminders_delete,
             ingest_file,
             pick_file,
@@ -708,8 +746,13 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             proactive::start(handle.clone());
+            monitor::start(handle.clone());
             integrations::start(handle.clone());
             spotify::start(handle.clone());
+            // After the islands, never before: created ahead of them this window stops
+            // their zoom correction (fit_zoom is never called) and the whole UI ends up
+            // at the wrong scale. See browser.rs.
+            browser::create_window_later(&handle);
             notifications::start(handle.clone());
             sysmon::start(handle.clone());
             clipboard::start(handle.clone());
