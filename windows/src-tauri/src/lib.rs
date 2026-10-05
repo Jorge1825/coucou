@@ -1,5 +1,6 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod browser;
 mod claude;
 mod context;
 mod dropzone;
@@ -644,6 +645,10 @@ pub fn run() {
             proactive::start(handle.clone());
             integrations::start(handle.clone());
             spotify::start(handle.clone());
+            // After the islands, never before: created ahead of them this window stops
+            // their zoom correction (fit_zoom is never called) and the whole UI ends up
+            // at the wrong scale. See browser.rs.
+            browser::create_window_later(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

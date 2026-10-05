@@ -274,4 +274,8 @@ export const ZH: Record<string, string> = {
   "Hide completely": "完全隐藏",
   "when idle in the compact island": "（紧凑模式下闲置时）",
   "When hidden, a small bar at the edge of the screen marks where to point to bring it back.": "隐藏时，屏幕边缘会有一条小横条，把鼠标指向它即可让岛重新出现。",
+  "Browser": "浏览器",
+  "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Mochi 可以在它自己隐藏的私密浏览器中打开的网站，用来帮你查找信息，例如招聘信息。它只读取：不会登录、点击或发送任何内容。每行一个网站；留空则保持关闭。",
+  "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi 可以读取：{sites}。添加第一个网站后请重启 Coucou。",
+  "Off: no sites listed.": "已关闭：未列出任何网站。",
 };

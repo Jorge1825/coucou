@@ -61,6 +61,10 @@ pub struct Settings {
     /// Global shortcut that opens the chat; empty = none.
     #[serde(default = "default_chat_hotkey")]
     pub chat_hotkey: String,
+    /// Sites Mochi's hidden browser may read, as bare domains. Empty = the
+    /// `read_page` tool is off.
+    #[serde(default)]
+    pub browser_sites: Vec<String>,
     /// Seconds in the compact island before it hides completely; 0 = never.
     /// Never by default: a fully hidden island is easy to lose.
     #[serde(default)]
@@ -137,6 +141,7 @@ impl Default for Settings {
             card_opacity: 1.0,
             idle_opacity: 1.0,
             chat_hotkey: default_chat_hotkey(),
+            browser_sites: Vec::new(),
             hide_after: 0,
             language: default_language(),
         }

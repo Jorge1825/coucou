@@ -274,4 +274,8 @@ export const ES: Record<string, string> = {
   "Hide completely": "Ocultar del todo",
   "when idle in the compact island": "si se queda quieto en modo compacto",
   "When hidden, a small bar at the edge of the screen marks where to point to bring it back.": "Cuando está oculto, una barrita en el borde de la pantalla marca dónde apuntar para traerlo de vuelta.",
+  "Browser": "Navegador",
+  "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Sitios web que Mochi puede abrir en su propio navegador oculto y privado para buscar cosas por ti, como ofertas de trabajo. Solo lee: nunca inicia sesión, hace clic ni envía nada. Un sitio por línea; vacío lo deja apagado.",
+  "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi puede leer: {sites}. Reinicia Coucou después de añadir el primer sitio.",
+  "Off: no sites listed.": "Apagado: no hay sitios en la lista.",
 };

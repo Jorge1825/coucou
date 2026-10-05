@@ -274,4 +274,8 @@ export const RU: Record<string, string> = {
   "Hide completely": "Скрывать полностью",
   "when idle in the compact island": "в компактном режиме без действий",
   "When hidden, a small bar at the edge of the screen marks where to point to bring it back.": "Когда остров скрыт, небольшая полоска у края экрана показывает, куда навести мышь, чтобы вернуть его.",
+  "Browser": "Браузер",
+  "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Сайты, которые Mochi может открывать в собственном скрытом приватном браузере, чтобы искать для вас информацию, например вакансии. Он только читает: не входит в аккаунты, не нажимает и ничего не отправляет. По одному сайту в строке; пусто — отключено.",
+  "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi может читать: {sites}. Перезапустите Coucou после добавления первого сайта.",
+  "Off: no sites listed.": "Выключено: список сайтов пуст.",
 };

@@ -122,6 +122,8 @@ export interface Settings {
   idleOpacity: number;
   /** Global shortcut that opens the chat, e.g. "Ctrl+Alt+M"; empty = none. */
   chatHotkey: string;
+  /** Sites Mochi's hidden browser may read; empty = off. */
+  browserSites: string[];
   /** Seconds in the compact island before it hides completely; 0 = never. */
   hideAfter: number;
   /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
@@ -176,6 +178,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cardOpacity: 1,
   idleOpacity: 1,
   chatHotkey: "Ctrl+Alt+M",
+  browserSites: [],
   hideAfter: 0,
   language: "auto",
 };

@@ -941,6 +941,44 @@ function formatDue(due: string): string {
 }
 
 /** What Mochi may do on its own: pending reminders and unprompted check-ins. */
+/** "https://www.indeed.com/jobs" → "indeed.com"; null when it isn't a domain. */
+function siteOf(input: string): string | null {
+  const s = input.trim().toLowerCase().replace(/^https?:\/\//, "").split(/[/?#]/)[0].replace(/^www\./, "");
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s) ? s : null;
+}
+
+function browserSection(): HTMLElement {
+  const box = h("textarea", {
+    rows: "3",
+    placeholder: "indeed.com\ncomputrabajo.com",
+    spellcheck: "false",
+    style: "width:100%;box-sizing:border-box;resize:vertical",
+  }) as HTMLTextAreaElement;
+  box.value = settings.browserSites.join("\n");
+  const note = h("div", { class: "hint" });
+  const show = () => {
+    note.textContent = settings.browserSites.length
+      ? t("Mochi may read: {sites}. Restart Coucou after adding the first site.", { sites: settings.browserSites.join(", ") })
+      : t("Off: no sites listed.");
+  };
+  show();
+  box.addEventListener("change", () => {
+    const sites = [...new Set(box.value.split(/[\s,;]+/).map(siteOf).filter((s): s is string => s !== null))];
+    settings.browserSites = sites;
+    box.value = sites.join("\n");
+    show();
+    void save();
+  });
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Browser") })),
+    h("div", { class: "hint", text: t("Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.") }),
+    box,
+    note,
+  );
+}
+
 function remindersSection(): HTMLElement {
   const list = h("div", { class: "reminder-list" });
 
@@ -1026,6 +1064,7 @@ async function main() {
     mochiSection(),
     transparencySection(),
     memorySection(),
+    browserSection(),
     remindersSection(),
     generalSection(),
     h("div", {
