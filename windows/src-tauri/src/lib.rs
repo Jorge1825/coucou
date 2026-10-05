@@ -9,6 +9,7 @@ mod goals;
 mod hooks;
 mod hotkey;
 mod integrations;
+mod monitor;
 mod island;
 mod log;
 mod memory;
@@ -371,6 +372,13 @@ fn reminders_delete(id: u64) -> Result<(), String> {
     reminders::delete(id)
 }
 
+/// "Test now" in Settings: checks everything listed once, without touching alert state.
+#[tauri::command]
+async fn monitor_check_now(shared: State<'_, Shared>) -> Result<Vec<monitor::CheckResult>, String> {
+    let settings = shared.settings.lock().unwrap().clone();
+    Ok(monitor::check_now(&settings).await)
+}
+
 /// The user's goals, for the settings window.
 #[tauri::command]
 fn goals_list() -> Vec<goals::Goal> {
@@ -622,6 +630,7 @@ pub fn run() {
             memory_delete,
             memory_clear,
             reminders_list,
+            monitor_check_now,
             goals_list,
             goals_add,
             goals_complete,
@@ -669,6 +678,7 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             proactive::start(handle.clone());
+            monitor::start(handle.clone());
             integrations::start(handle.clone());
             spotify::start(handle.clone());
             // After the islands, never before: created ahead of them this window stops

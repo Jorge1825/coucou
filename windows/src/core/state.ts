@@ -128,6 +128,14 @@ export interface Settings {
   hideAfter: number;
   /** Interface language: "auto" (Windows' language), "en", "es", "ru" or "zh". */
   language: string;
+  /** Watch sites and Dokploy instances and alert when one fails. */
+  monitor: boolean;
+  /** Minutes between checks, 1…60. */
+  monitorMinutes: number;
+  /** Full URLs of the websites to watch. */
+  monitorSites: string[];
+  /** Dokploy instances; each API key is in the Credential Manager, named after the instance. */
+  monitorDokploy: { name: string; url: string }[];
 }
 
 /** Keeps a stored opacity inside what still leaves the island usable. */
@@ -181,6 +189,10 @@ export const DEFAULT_SETTINGS: Settings = {
   browserSites: [],
   hideAfter: 0,
   language: "auto",
+  monitor: false,
+  monitorMinutes: 5,
+  monitorSites: [],
+  monitorDokploy: [],
 };
 
 type Listener = () => void;
@@ -211,6 +223,8 @@ class AppState {
   /** Screenshot the user asked for; goes out with the next chat message, once. */
   pendingScreen: { path: string } | null = null;
   noteMessage: string | null = null;
+  /** What produced the note: "alert" / "recovered" get their own look; null = plain. */
+  noteKind: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;

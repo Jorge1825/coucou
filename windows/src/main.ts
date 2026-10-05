@@ -91,15 +91,17 @@ async function main() {
   await onEvent<{ text: string; kind: string }>("nudge", ({ text, kind }) => {
     if (State.paused) return;
     State.noteMessage = text;
+    State.noteKind = kind;
     // The attention chime the approvals use: a reminder has to be heard.
     Sound.resume();
-    Sound.play("approval");
+    // Something breaking is not a reminder: it gets its own sound, and good news another.
+    Sound.play(kind === "alert" ? "error" : kind === "recovered" ? "finish" : "approval");
     island.alert("note");
     island.attention();
     // Let it close by itself if the user never comes near it.
     island.fsm.mouseLeft();
     // A reminder startles; a check-in of its own is said with a wink.
-    window.setTimeout(() => island.react(kind === "reminder" ? "surprised" : "wink"), 450);
+    window.setTimeout(() => island.react(kind === "reminder" || kind === "alert" ? "surprised" : kind === "recovered" ? "happy" : "wink"), 450);
   });
 
   // Dragging the island back and forth makes Mochi dizzy.

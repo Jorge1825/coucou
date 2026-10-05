@@ -73,6 +73,33 @@ pub struct Settings {
     /// Mochi's chat answers in it too.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Watch the sites and Dokploy instances below and alert when one fails.
+    /// Off by default: it makes background requests to the URLs listed here.
+    #[serde(default)]
+    pub monitor: bool,
+    /// Minutes between checks when `monitor` is on (clamped to 1…60).
+    #[serde(default = "default_monitor_minutes")]
+    pub monitor_minutes: u32,
+    /// Full URLs of the websites to watch.
+    #[serde(default)]
+    pub monitor_sites: Vec<String>,
+    /// Dokploy instances to watch. Each one's API key is in the Credential Manager.
+    #[serde(default)]
+    pub monitor_dokploy: Vec<DokployTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DokployTarget {
+    /// Also names the Credential Manager entry that holds its API key.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+fn default_monitor_minutes() -> u32 {
+    5
 }
 
 fn default_one() -> f64 {
@@ -144,6 +171,10 @@ impl Default for Settings {
             browser_sites: Vec::new(),
             hide_after: 0,
             language: default_language(),
+            monitor: false,
+            monitor_minutes: default_monitor_minutes(),
+            monitor_sites: Vec::new(),
+            monitor_dokploy: Vec::new(),
         }
     }
 }

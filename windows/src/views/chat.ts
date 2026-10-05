@@ -107,6 +107,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         return;
       }
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.noteKind = null;
       State.view = "note";
       Sound.play("error");
     } finally {
@@ -129,6 +130,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       Sound.play("blip");
     } catch (err) {
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.noteKind = null;
       State.view = "note";
       Sound.play("error");
     } finally {

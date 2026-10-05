@@ -27,7 +27,8 @@ const RECENT_KEPT: usize = 5;
 #[derive(Serialize, Clone)]
 pub struct Nudge {
     pub text: String,
-    /// "reminder" (set by the user or by Mochi earlier) or "mochi" (its own call).
+    /// "reminder" (set by the user or by Mochi earlier), "mochi" (its own call),
+    /// or "alert" / "recovered" from monitor.rs (a watched site or service).
     pub kind: &'static str,
 }
 

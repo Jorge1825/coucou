@@ -1096,6 +1096,137 @@ function remindersSection(): HTMLElement {
   );
 }
 
+// ── Monitoring section ────────────────────────────────────────────────────────
+
+/** "example.com/" → "https://example.com"; null when it can't be a web address. */
+function urlOf(input: string): string | null {
+  const s = input.trim().replace(/\/+$/, "");
+  if (!s || /\s/.test(s)) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? null : `https://${s}`;
+}
+
+function monitorSection(): HTMLElement {
+  const sites = h("textarea", {
+    rows: "3",
+    placeholder: "https://mysite.com\nhttps://api.mysite.com/health",
+    spellcheck: "false",
+    style: "width:100%;box-sizing:border-box;resize:vertical",
+  }) as HTMLTextAreaElement;
+  sites.value = settings.monitorSites.join("\n");
+  sites.addEventListener("change", () => {
+    const urls = [...new Set(sites.value.split(/[\s,;]+/).map(urlOf).filter((s): s is string => s !== null))];
+    settings.monitorSites = urls;
+    sites.value = urls.join("\n");
+    void save();
+  });
+
+  const minutes = h("select", {}) as HTMLSelectElement;
+  for (const m of [1, 5, 10, 15, 30, 60]) {
+    minutes.append(h("option", { value: String(m), text: m === 1 ? t("1 minute") : m < 60 ? t("{n} minutes", { n: m }) : t("1 hour") }));
+  }
+  minutes.value = String(settings.monitorMinutes);
+  minutes.addEventListener("change", () => {
+    settings.monitorMinutes = Number(minutes.value) || 5;
+    void save();
+  });
+
+  // Dokploy instances: the list is plain settings, each API key sits in the Credential Manager.
+  const servers = h("div", { class: "reminder-list" });
+  const note = h("span", { class: "hint" });
+  const keyOf = (name: string) => `dokploy-key:${name.trim()}`;
+
+  function drawServers() {
+    clear(servers);
+    if (settings.monitorDokploy.length === 0) {
+      servers.append(h("div", { class: "hint", text: t("No Dokploy servers yet.") }));
+      return;
+    }
+    settings.monitorDokploy.forEach((d, i) => {
+      servers.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: d.name }),
+          h("span", { class: "what", text: d.url }),
+          h("button", {
+            title: t("Remove"),
+            text: "×",
+            onclick: async () => {
+              try { await Bridge.secretClear(keyOf(d.name)); } catch { /* nothing stored */ }
+              settings.monitorDokploy.splice(i, 1);
+              void save();
+              drawServers();
+            },
+          }),
+        ),
+      );
+    });
+  }
+  drawServers();
+
+  const name = h("input", { type: "text", placeholder: t("Name, e.g. vps-1"), style: "flex:0 1 130px;min-width:0", spellcheck: "false" }) as HTMLInputElement;
+  const url = h("input", { type: "text", placeholder: "https://dokploy.mysite.com", style: "flex:1 1 auto;min-width:0", spellcheck: "false" }) as HTMLInputElement;
+  const key = h("input", { type: "password", placeholder: t("API key"), style: "flex:1 1 auto;min-width:0", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
+  const add = h("button", { text: t("Add") });
+  add.addEventListener("click", async () => {
+    const n = name.value.trim();
+    const u = urlOf(url.value);
+    const k = key.value.trim();
+    if (!n || !u || !k) { note.textContent = t("A name, a URL and an API key are needed."); return; }
+    if (settings.monitorDokploy.some((d) => d.name.trim() === n)) { note.textContent = t("That name is already used."); return; }
+    try {
+      await Bridge.secretSet(keyOf(n), k);
+      settings.monitorDokploy.push({ name: n, url: u });
+      void save();
+      name.value = ""; url.value = ""; key.value = ""; note.textContent = "";
+      drawServers();
+    } catch (err) {
+      note.textContent = t("Could not save: {error}", { error: String(err).replace(/^Error:\s*/, "") });
+    }
+  });
+
+  // One-off check so a typo shows up now, not at the first alert.
+  const results = h("div", { class: "reminder-list" });
+  const test = h("button", { text: t("Test now") });
+  test.addEventListener("click", async () => {
+    clear(results);
+    results.append(h("div", { class: "hint", text: t("Checking…") }));
+    const found = (await Bridge.monitorCheckNow()) ?? [];
+    clear(results);
+    if (found.length === 0) {
+      results.append(h("div", { class: "hint", text: t("Nothing to check: list a site or a Dokploy server first.") }));
+    }
+    for (const r of found) {
+      results.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: r.ok ? "✓" : "✗" }),
+          h("span", { class: "what", text: r.ok ? r.label : `${r.label}: ${r.detail}` }),
+        ),
+      );
+    }
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Monitoring") })),
+    h("div", { class: "hint", text: t("Mochi checks your websites and Dokploy servers and interrupts you when one goes down or a service fails, and again when it is back. It only contacts the addresses you list here, and alerts ignore quiet hours. Off by default.") }),
+    h("div", { class: "row" },
+      h("label", { text: t("Watch my sites and servers") }),
+      toggle(settings.monitor, (v) => { settings.monitor = v; void save(); }),
+      minutes,
+      h("span", { class: "hint", text: t("between checks") }),
+    ),
+    h("div", { class: "hint", text: t("Websites to watch, one URL per line. A site counts as down when it does not answer or returns a server error (5xx).") }),
+    sites,
+    h("div", { class: "hint", text: t("Dokploy servers. In Dokploy, create an API key under Settings → Profile → API/CLI; it is stored in the Windows Credential Manager, never in a file.") }),
+    servers,
+    h("div", { class: "row" }, name, url, key, add),
+    note,
+    h("div", { class: "row" }, test),
+    results,
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1129,6 +1260,7 @@ async function main() {
     memorySection(),
     goalsSection(),
     browserSection(),
+    monitorSection(),
     remindersSection(),
     generalSection(),
     h("div", {

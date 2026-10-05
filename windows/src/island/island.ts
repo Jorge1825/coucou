@@ -496,6 +496,7 @@ export class Island {
       .catch((err) => {
         UploadSeq.deactivate();
         State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        State.noteKind = null;
         this.engine.animateMorph(0);
         this.setView("note");
         Sound.play("error");

@@ -285,4 +285,33 @@ export const ZH: Record<string, string> = {
   "Websites Mochi may open in its own hidden, private browser to look things up for you, such as job listings. It only reads: it never logs in, clicks or sends anything. One site per line; empty keeps it off.": "Mochi 可以在它自己隐藏的私密浏览器中打开的网站，用来帮你查找信息，例如招聘信息。它只读取：不会登录、点击或发送任何内容。每行一个网站；留空则保持关闭。",
   "Mochi may read: {sites}. Restart Coucou after adding the first site.": "Mochi 可以读取：{sites}。添加第一个网站后请重启 Coucou。",
   "Off: no sites listed.": "已关闭：未列出任何网站。",
+  // ── Settings: monitoring ──
+  "Monitoring":
+    "监控",
+  "Mochi checks your websites and Dokploy servers and interrupts you when one goes down or a service fails, and again when it is back. It only contacts the addresses you list here, and alerts ignore quiet hours. Off by default.":
+    "Mochi 会检查你的网站和 Dokploy 服务器，在其中任何一个宕机或服务出错时提醒你，恢复后也会再通知一次。它只会访问你在这里列出的地址，并且警报不受免打扰时段限制。默认关闭。",
+  "Watch my sites and servers":
+    "监控我的网站和服务器",
+  "between checks":
+    "检查间隔",
+  "1 minute":
+    "1 分钟",
+  "Websites to watch, one URL per line. A site counts as down when it does not answer or returns a server error (5xx).":
+    "要监控的网站，每行一个 URL。网站无响应或返回服务器错误（5xx）即视为宕机。",
+  "Dokploy servers. In Dokploy, create an API key under Settings → Profile → API/CLI; it is stored in the Windows Credential Manager, never in a file.":
+    "Dokploy 服务器。请在 Dokploy 的“设置 → 个人资料 → API/CLI”中创建 API 密钥；密钥保存在 Windows 凭据管理器中，不会写入文件。",
+  "No Dokploy servers yet.":
+    "还没有 Dokploy 服务器。",
+  "Name, e.g. vps-1":
+    "名称，例如 vps-1",
+  "A name, a URL and an API key are needed.":
+    "需要填写名称、URL 和 API 密钥。",
+  "That name is already used.":
+    "该名称已被使用。",
+  "Test now":
+    "立即测试",
+  "Checking…":
+    "检查中…",
+  "Nothing to check: list a site or a Dokploy server first.":
+    "没有可检查的内容：请先添加网站或 Dokploy 服务器。",
 };

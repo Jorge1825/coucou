@@ -43,6 +43,12 @@ export interface Goal {
   done: boolean;
 }
 
+export interface MonitorResult {
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
 export interface Reminder {
   id: number;
   text: string;
@@ -126,6 +132,8 @@ export const Bridge = {
   goalsAdd: (title: string, due: string | null) => callOrThrow<number>("goals_add", { title, due }),
   goalsComplete: (id: number) => call<string>("goals_complete", { id }),
   goalsDelete: (id: number) => call<void>("goals_delete", { id }),
+  /** "Test now" for the monitoring section: one check of everything listed. */
+  monitorCheckNow: () => call<MonitorResult[]>("monitor_check_now"),
   remindersList: () => call<Reminder[]>("reminders_list"),
   remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
   memoryList: () => call<MemoryNote[]>("memory_list"),
