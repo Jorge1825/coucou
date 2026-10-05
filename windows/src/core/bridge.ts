@@ -163,6 +163,22 @@ export const Bridge = {
   spotifyControl: (action: "play_pause" | "next" | "previous") =>
     call<void>("spotify_control", { action }),
 
+  // ── Windows notifications ─────────────────────────────────────────────────
+  notificationsStatus: () => call<string>("notifications_status"),
+  notificationsRequestAccess: () => call<string>("notifications_request_access"),
+  /** Apps seen this session, for the per-app mute list. */
+  notificationsApps: () => call<string[]>("notifications_apps"),
+  /** Files and lines a finished run changed; null outside a git repository. */
+  gitSummary: (cwd: string) => call<import("./state").GitSummary | null>("git_summary", { cwd }),
+  calendarRefresh: () => call<void>("calendar_refresh"),
+  /** Open-Meteo city lookup for the weather outfit. Rejects with a message. */
+  weatherFindCity: (name: string) =>
+    callOrThrow<{ name: string; country: string; latitude: number; longitude: number }>("weather_find_city", { name }),
+  /** Tells every island to drop this notification from its list. */
+  notificationDismiss: (id: number) => call<void>("notification_dismiss", { id }),
+  /** Windows' own privacy page — only the user can grant access there. */
+  openNotificationSettings: () => call<void>("open_notification_settings"),
+
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
 };
@@ -244,6 +260,11 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
  * island per display, and the global `listen` would also hand us the cursor,
  * dock and shake events meant for the other displays' islands.
  */
+/** This window's label: "island" (main display), "island-1"… or "settings". */
+export function windowLabel(): string {
+  return IS_TAURI ? getCurrentWebviewWindow().label : "island";
+}
+
 export async function onEvent<T>(name: string, handler: (payload: T) => void) {
   if (!IS_TAURI) return () => {};
   return getCurrentWebviewWindow().listen<T>(name, (e) => handler(e.payload));

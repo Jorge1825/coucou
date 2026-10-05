@@ -122,19 +122,24 @@ pub fn emit_all<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) 
     });
 }
 
-/// Sends an event to the island on the display under the cursor (tray "Open",
-/// a second launch): only the Mochi the user is looking at should answer.
-pub fn emit_focused<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+/// The island on the display under the cursor, else the first one shown.
+pub fn label_under_cursor(app: &AppHandle) -> String {
     let islands = all();
     let under_cursor = cursor_physical().and_then(|(cx, cy)| {
         islands
             .iter()
             .find(|iw| monitor_of(app, iw).is_some_and(|m| monitor_contains(&m, cx, cy)))
     });
-    let target = under_cursor
+    under_cursor
         .or_else(|| islands.iter().find(|iw| monitor_of(app, iw).is_some()))
         .map(|iw| iw.label.clone())
-        .unwrap_or_else(|| WINDOW_LABEL.to_string());
+        .unwrap_or_else(|| WINDOW_LABEL.to_string())
+}
+
+/// Sends an event to the island on the display under the cursor (tray "Open",
+/// a second launch): only the Mochi the user is looking at should answer.
+pub fn emit_focused<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let target = label_under_cursor(app);
     let _ = app.emit_to(target.as_str(), event, payload);
 }
 

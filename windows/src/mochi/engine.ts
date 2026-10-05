@@ -7,7 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
-import { drawAccessories, type FaceKind, type HatKind } from "./accessories";
+import { drawAccessories, NO_EXTRAS, type Extras, type FaceKind, type HatKind, type NeckKind } from "./accessories";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -204,6 +204,11 @@ export class BotEngine {
   /** What Mochi wears (chosen in Settings). Mini bots never wear anything. */
   hat: HatKind = "none";
   face: FaceKind = "none";
+  neck: NeckKind = "none";
+  /** Put on by Mochi itself (night, weather, birthday…); wins over `hat` meanwhile. */
+  autoHat: HatKind | null = null;
+  /** Scarf / umbrella / gamer mic chosen by the day (see island/outfits.ts). */
+  autoExtras: Extras = NO_EXTRAS;
 
   /**
    * Spotify is playing: Mochi puts its headphones on, sways to the beat and
@@ -506,6 +511,13 @@ export class BotEngine {
         setTimeout(() => Sound.play("annoyed"), 60);
         break;
     }
+  }
+
+  /** A quick look to one side (1 = right) and a blink: "something came in". */
+  glance(dir = 1) {
+    if (this.locks.has("yaw")) return;
+    this.anim("yaw", [[0.55 * dir, 220, Ease.out], [0.55 * dir, 700, Ease.lin], [0, 380, Ease.inOut]]);
+    window.setTimeout(() => this.blink(), 260);
   }
 
   /** Headphones on or off. Off → Mochi stops swaying on the next frames. */
@@ -821,8 +833,15 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
-    if (!this.isMini && (this.hat !== "none" || this.face !== "none" || this.music)) {
-      drawAccessories(x, this.hat, this.face, this, R, rx, ry, this.music ? this.musicPulse : null);
+    if (!this.isMini) {
+      const hat = this.autoHat ?? this.hat;
+      const extras: Extras = {
+        ...this.autoExtras,
+        neck: this.autoExtras.neck !== "none" ? this.autoExtras.neck : this.neck,
+      };
+      if (hat !== "none" || this.face !== "none" || this.music || extras.neck !== "none" || extras.umbrella || extras.mic) {
+        drawAccessories(x, hat, this.face, this, R, rx, ry, this.music ? this.musicPulse : null, extras);
+      }
     }
 
     x.restore();

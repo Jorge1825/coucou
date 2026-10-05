@@ -9,8 +9,13 @@ import { DEFAULT_SETTINGS, OPACITY_MIN, clampOpacity, type Settings } from "../c
 import { h, clear } from "../views/dom";
 import { BotEngine } from "../mochi/engine";
 import { Sound } from "../core/sound";
-import { FACES, HATS, isFace, isHat } from "../mochi/accessories";
+import { FACES, HATS, NECKS, isFace, isHat, isNeck } from "../mochi/accessories";
+import {
+  calendarSection, clipboardSection, daySection, outfitsSection, sessionsSection, systemSection, type Ctx,
+} from "./features";
 import { LANGUAGES, setLanguage, t } from "../core/i18n";
+import { ICONS } from "../views/icons";
+import { buildShell } from "./shell";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -481,6 +486,138 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: t("Integrations") })), note, search, list);
 }
 
+// ── Notifications section ─────────────────────────────────────────────────────
+
+/** Windows notifications in the island: access, silence, pop-up, sound, muted apps. */
+function notificationsSection(): HTMLElement {
+  const section = h("section", {});
+  let access = "unknown";
+  let seen: string[] = [];
+
+  async function refresh() {
+    access = (await Bridge.notificationsStatus()) ?? "unavailable";
+    seen = (await Bridge.notificationsApps()) ?? [];
+    draw();
+  }
+
+  function draw() {
+    clear(section);
+    const allowed = access === "allowed";
+    const statusText = allowed
+      ? t("Allowed")
+      : access === "unavailable"
+        ? t("Not available on this Windows")
+        : t("Not allowed yet");
+
+    const popup = h("select", {}) as HTMLSelectElement;
+    popup.append(
+      h("option", { value: "discreet", text: t("Discreet — a small banner for a few seconds") }),
+      h("option", { value: "expand", text: t("Open the island") }),
+      h("option", { value: "bell", text: t("Only the dot on the bell") }),
+    );
+    popup.value = settings.notificationsStyle || "discreet";
+    popup.addEventListener("change", () => {
+      settings.notificationsStyle = popup.value;
+      void save();
+    });
+
+    const hour = (value: number, set: (v: number) => void) => {
+      const sel = h("select", {}) as HTMLSelectElement;
+      for (let i = 0; i < 24; i++) {
+        sel.append(h("option", { value: String(i), text: `${String(i).padStart(2, "0")}:00` }));
+      }
+      sel.value = String(value);
+      sel.addEventListener("change", () => { set(Number(sel.value)); void save(); });
+      return sel;
+    };
+
+    const mutedApps = settings.notificationsMutedApps ?? [];
+    const mutedChips = h("div", { class: "chips" });
+    if (mutedApps.length === 0) mutedChips.append(h("span", { class: "hint", text: t("None") }));
+    for (const a of mutedApps) {
+      mutedChips.append(h("button", {
+        class: "chip on",
+        title: t("Unmute"),
+        text: `${a}  ×`,
+        onclick: () => {
+          settings.notificationsMutedApps = mutedApps.filter((x) => x !== a);
+          void save();
+          draw();
+        },
+      }));
+    }
+    const recent = seen.filter((a) => !mutedApps.includes(a));
+    const recentChips = h("div", { class: "chips" });
+    for (const a of recent) {
+      recentChips.append(h("button", {
+        class: "chip",
+        title: t("Mute"),
+        text: a,
+        onclick: () => {
+          settings.notificationsMutedApps = [...mutedApps, a];
+          void save();
+          draw();
+        },
+      }));
+    }
+
+    const parts: (Node | null)[] = [
+      h("h2", {}, statusDot(allowed && settings.notifications), h("span", { text: t("Notifications") })),
+      h("div", { class: "hint", text: t("Windows notifications show up in the island. Their content stays on this PC: it is never sent anywhere and never written to the log.") }),
+      h("div", { class: "row" },
+        h("label", { text: t("Windows access") }),
+        h("span", { class: "hint", text: statusText }),
+        allowed ? null : h("button", { class: "primary", text: t("Open Windows settings"), onclick: () => void Bridge.openNotificationSettings() }),
+        h("button", {
+          text: t("Check again"),
+          onclick: async () => {
+            access = (await Bridge.notificationsRequestAccess()) ?? access;
+            await refresh();
+          },
+        }),
+      ),
+      allowed ? null : h("div", { class: "hint", text: t("In Windows: Settings → Privacy & security → Notifications → turn on “Notification access”. Only you can switch it on.") }),
+      h("div", { class: "row" },
+        h("label", { text: t("Show in the island") }),
+        toggle(settings.notifications, (v) => { settings.notifications = v; void save(); }),
+      ),
+      h("div", { class: "row" },
+        h("label", { text: t("Silence") }),
+        toggle(settings.notificationsMuted, (v) => { settings.notificationsMuted = v; void save(); }),
+        h("span", { class: "hint", text: t("listed under the bell, but no pop-up and no sound") }),
+      ),
+      h("div", { class: "row" },
+        h("label", { text: t("When one arrives") }),
+        popup,
+      ),
+      h("div", { class: "row" },
+        h("label", { text: t("Soft chime") }),
+        toggle(settings.notificationsChime, (v) => { settings.notificationsChime = v; void save(); }),
+        h("span", { class: "hint", text: t("the app that sent it usually chimes already") }),
+      ),
+      h("div", { class: "row" },
+        h("label", { text: t("Quiet hours") }),
+        toggle(settings.notificationsQuiet, (v) => { settings.notificationsQuiet = v; void save(); }),
+        hour(settings.notificationsQuietFrom ?? 22, (v) => { settings.notificationsQuietFrom = v; }),
+        h("span", { class: "hint", text: "→" }),
+        hour(settings.notificationsQuietTo ?? 8, (v) => { settings.notificationsQuietTo = v; }),
+      ),
+      h("div", { class: "hint", text: t("Nothing pops up either while Windows' Do not disturb is on or an app is full screen; they wait under the bell.") }),
+      h("div", { class: "row" }, h("label", { text: t("Muted apps") }), mutedChips),
+      recent.length
+        ? h("div", { class: "row" }, h("label", { text: t("Seen today") }), recentChips)
+        : null,
+    ];
+    section.append(...parts.filter((x): x is Node => x != null));
+  }
+
+  draw();
+  void refresh();
+  // Access can be switched on in Windows while this window is open.
+  window.addEventListener("focus", () => void refresh());
+  return section;
+}
+
 // ── Transparency section ──────────────────────────────────────────────────────
 
 type OpacityKey = "islandOpacity" | "cardOpacity" | "idleOpacity";
@@ -758,6 +895,7 @@ function mochiSection(): HTMLElement {
   const applyLook = () => {
     engine.hat = isHat(settings.mochiHat) ? settings.mochiHat : "none";
     engine.face = isFace(settings.mochiFace) ? settings.mochiFace : "none";
+    engine.neck = isNeck(settings.mochiNeck) ? settings.mochiNeck : "none";
   };
   applyLook();
 
@@ -831,6 +969,10 @@ function mochiSection(): HTMLElement {
         h("div", { class: "row" },
           h("label", { text: t("Face") }),
           picker(FACES, () => settings.mochiFace, (v) => { settings.mochiFace = v; }),
+        ),
+        h("div", { class: "row" },
+          h("label", { text: t("Neck") }),
+          picker(NECKS, () => settings.mochiNeck, (v) => { settings.mochiNeck = v; }),
         ),
         h("div", { class: "row" },
           h("label", { text: t("Preview") }),
@@ -1249,24 +1391,35 @@ async function main() {
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 
+  present["calendar-ics"] = (await Bridge.secretPresent("calendar-ics")) ?? false;
+  const ctx: Ctx = { settings: () => settings, save, toggle, present };
+
   clear(root);
   root.append(
-    h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
-    apiSection(present),
-    integrationsSection(present),
-    mochiSection(),
-    transparencySection(),
-    memorySection(),
-    goalsSection(),
-    browserSection(),
-    monitorSection(),
-    remindersSection(),
-    generalSection(),
-    h("div", {
-      class: "hint",
-      text: t("No telemetry. Network requests only go to the services you configure yourself."),
-    }),
+    buildShell(
+      h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
+      h("div", {
+        class: "hint",
+        text: t("No telemetry. Network requests only go to the services you configure yourself."),
+      }),
+      [
+        { id: "general", label: t("General"), icon: ICONS.gear, sections: [generalSection(), transparencySection()] },
+        {
+          id: "claude", label: t("Claude Code & AI"), icon: ICONS.bubble,
+          sections: [claudeSection(status), sessionsSection(ctx), apiSection(present)],
+        },
+        { id: "mochi", label: "Mochi", icon: ICONS.star, sections: [mochiSection(), outfitsSection(ctx), daySection(ctx)] },
+        {
+          id: "alerts", label: t("Notifications & alerts"), icon: ICONS.bell,
+          sections: [notificationsSection(), systemSection(ctx), remindersSection()],
+        },
+        {
+          id: "productivity", label: t("Productivity"), icon: ICONS.timer,
+          sections: [calendarSection(ctx), clipboardSection(ctx), memorySection(), goalsSection()],
+        },
+        { id: "integrations", label: t("Integrations"), icon: ICONS.stack, sections: [integrationsSection(present), browserSection(), monitorSection()] },
+      ],
+    ),
   );
 
   void onEvent<Settings>("settings-changed", (s) => {
