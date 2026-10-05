@@ -100,6 +100,8 @@ const REMEMBER: &str = "remember";
 const REMIND: &str = "remind";
 const SYSTEM_STATS: &str = "system_stats";
 const READ_PAGE: &str = "read_page";
+const ADD_GOAL: &str = "add_goal";
+const UPDATE_GOAL: &str = "update_goal";
 /// A turn may chain a few `remember` calls before the final answer; more than
 /// this is a model going in circles.
 const MAX_TOOL_ROUNDS: usize = 3;
@@ -140,6 +142,79 @@ fn read_page_schema() -> Value {
     })
 }
 
+fn add_goal_description() -> &'static str {
+    "Record a goal the user says they want to achieve (\"I want to pass calculus\", \"I'm learning Rust\"). \
+Only for goals the user states themselves — never invent one. `due` is an optional date as YYYY-MM-DD; `steps` is an \
+optional short list of concrete steps. Do not store secrets."
+}
+
+fn add_goal_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": { "type": "string", "description": "The goal, in the user's words, one short sentence." },
+            "due": { "type": "string", "description": "Deadline, YYYY-MM-DD. Leave out when there is none." },
+            "steps": { "type": "array", "items": { "type": "string" }, "description": "Concrete steps, shortest first." },
+        },
+        "required": ["title"],
+    })
+}
+
+fn update_goal_description() -> &'static str {
+    "Update one of the user's goals (ids are in your list of active goals) when they report progress: \
+`step_done` ticks off step number `step` (1-based), `add_step` adds a step with `text`, `complete` marks the whole goal done. \
+Use it when the user tells you they did something, not before."
+}
+
+fn update_goal_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "integer", "description": "The goal's id, as listed." },
+            "action": { "type": "string", "enum": ["step_done", "add_step", "complete"] },
+            "step": { "type": "integer", "description": "For step_done: the step number, starting at 1." },
+            "text": { "type": "string", "description": "For add_step: the new step." },
+        },
+        "required": ["id", "action"],
+    })
+}
+
+fn run_add_goal(input: &Value) -> String {
+    let Some(title) = input.get("title").and_then(Value::as_str) else {
+        return "Not saved: the call needs a title.".into();
+    };
+    let due = input.get("due").and_then(Value::as_str);
+    let steps: Vec<String> = input
+        .get("steps")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    match crate::goals::add(title, due, &steps) {
+        Ok(id) => format!("Goal saved (id {id})."),
+        Err(why) => why,
+    }
+}
+
+fn run_update_goal(input: &Value) -> String {
+    use crate::goals::Change;
+    let (Some(id), Some(action)) = (input.get("id").and_then(Value::as_u64), input.get("action").and_then(Value::as_str)) else {
+        return "Not updated: the call needs `id` and `action`.".into();
+    };
+    let change = match action {
+        "complete" => Change::Complete,
+        "step_done" => match input.get("step").and_then(Value::as_u64) {
+            Some(n) => Change::StepDone(n as usize),
+            None => return "Not updated: step_done needs `step`.".into(),
+        },
+        "add_step" => match input.get("text").and_then(Value::as_str) {
+            Some(text) => Change::AddStep(text.to_string()),
+            None => return "Not updated: add_step needs `text`.".into(),
+        },
+        _ => return "Not updated: unknown action.".into(),
+    };
+    crate::goals::update(id, change).unwrap_or_else(|why| why)
+}
+
 fn system_stats_schema() -> Value {
     json!({ "type": "object", "properties": {} })
 }
@@ -170,6 +245,8 @@ fn client_tools_always() -> Vec<(&'static str, &'static str, Value)> {
         (REMEMBER, remember_description(), remember_schema()),
         (REMIND, remind_description(), remind_schema()),
         (SYSTEM_STATS, system_stats_description(), system_stats_schema()),
+        (ADD_GOAL, add_goal_description(), add_goal_schema()),
+        (UPDATE_GOAL, update_goal_description(), update_goal_schema()),
     ]
 }
 
@@ -222,7 +299,8 @@ language, where they live or work, family and pets, preferences and habits, tool
 For example, if they say \"me llamo Ana\" or \"I'm a nurse\", call remember in that same turn, while you answer. \
 Also use it whenever they ask you to remember something. One short fact per call. Do not save one-off requests, \
 small talk or things already in your notes, and never save credentials or secrets of any kind. \
-Do not announce every note you save; mention it only when the user asked you to remember something.",
+Do not announce every note you save; mention it only when the user asked you to remember something. \
+When the user states something they want to achieve, record it with add_goal; when they report progress on one, update it with update_goal.",
     );
     prompt.push_str(&format!(
         "\n\nThe user's local date and time is {} (YYYY-MM-DDTHH:MM). You can set reminders with the remind tool: \
@@ -245,6 +323,18 @@ fn append_context(prompt: &mut String, notes: &[String], with_reminders: bool) {
             for r in pending {
                 prompt.push_str(&format!("- {} {}\n", r.due, r.text));
             }
+        }
+    }
+    let goals = crate::goals::lines_for_model(&crate::goals::list(), &reminders::now());
+    if !goals.is_empty() {
+        prompt.push_str(
+            "\n\nThe user's active goals (help them reach these: mention a close deadline or the next step when it is relevant, \
+without nagging):\n",
+        );
+        for line in goals {
+            prompt.push_str("- ");
+            prompt.push_str(&line);
+            prompt.push('\n');
         }
     }
     if !notes.is_empty() {
@@ -284,7 +374,7 @@ fn anthropic_tools() -> Value {
 }
 
 fn is_client_tool(name: Option<&str>) -> bool {
-    matches!(name, Some(REMEMBER) | Some(REMIND) | Some(SYSTEM_STATS) | Some(READ_PAGE))
+    matches!(name, Some(REMEMBER) | Some(REMIND) | Some(SYSTEM_STATS) | Some(ADD_GOAL) | Some(UPDATE_GOAL) | Some(READ_PAGE))
 }
 
 /// Prompt caching is Anthropic's own feature; other servers that merely speak the
@@ -433,6 +523,8 @@ fn run_tool(name: &str, input: &Value) -> String {
     match name {
         REMIND => run_remind(input),
         SYSTEM_STATS => crate::sysinfo::describe(&crate::sysinfo::read()),
+        ADD_GOAL => run_add_goal(input),
+        UPDATE_GOAL => run_update_goal(input),
         _ => run_remember(input),
     }
 }

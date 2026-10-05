@@ -5,6 +5,7 @@ mod claude;
 mod context;
 mod dropzone;
 mod files;
+mod goals;
 mod hooks;
 mod hotkey;
 mod integrations;
@@ -370,6 +371,27 @@ fn reminders_delete(id: u64) -> Result<(), String> {
     reminders::delete(id)
 }
 
+/// The user's goals, for the settings window.
+#[tauri::command]
+fn goals_list() -> Vec<goals::Goal> {
+    goals::list()
+}
+
+#[tauri::command]
+fn goals_add(title: String, due: Option<String>) -> Result<u64, String> {
+    goals::add(&title, due.as_deref(), &[])
+}
+
+#[tauri::command]
+fn goals_complete(id: u64) -> Result<String, String> {
+    goals::update(id, goals::Change::Complete)
+}
+
+#[tauri::command]
+fn goals_delete(id: u64) -> Result<(), String> {
+    goals::delete(id)
+}
+
 /// Everything Mochi remembers, oldest first, for the settings window.
 #[tauri::command]
 fn memory_list() -> Vec<memory::Note> {
@@ -600,6 +622,10 @@ pub fn run() {
             memory_delete,
             memory_clear,
             reminders_list,
+            goals_list,
+            goals_add,
+            goals_complete,
+            goals_delete,
             reminders_delete,
             ingest_file,
             pick_file,

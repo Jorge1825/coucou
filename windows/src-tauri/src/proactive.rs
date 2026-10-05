@@ -64,11 +64,23 @@ pub fn reply_to_nudge(reply: &str) -> Option<String> {
     Some(text.chars().take(240).collect())
 }
 
-fn context(now: &str, notes: &[String], pending: &[reminders::Reminder], recent: &[String]) -> String {
+fn context(
+    now: &str,
+    notes: &[String],
+    goals: &[String],
+    pending: &[reminders::Reminder],
+    recent: &[String],
+) -> String {
     let mut out = format!("Local date and time: {now}\n");
     out.push_str("\nWhat you remember about the user:\n");
     for n in notes {
         out.push_str(&format!("- {n}\n"));
+    }
+    if !goals.is_empty() {
+        out.push_str("\nThe user's active goals:\n");
+        for g in goals {
+            out.push_str(&format!("- {g}\n"));
+        }
     }
     if !pending.is_empty() {
         out.push_str("\nReminders already set (they will fire on their own):\n");
@@ -125,11 +137,12 @@ pub fn start(app: AppHandle) {
             }
             let notes = memory::load();
             let pending = reminders::load();
-            if notes.is_empty() && pending.is_empty() {
+            let goal_lines = crate::goals::lines_for_model(&crate::goals::list(), &now);
+            if notes.is_empty() && pending.is_empty() && goal_lines.is_empty() {
                 continue; // nothing to base a nudge on
             }
             let Ok(target) = providers::target(&settings) else { continue };
-            let prompt = context(&now, &notes, &pending, &recent);
+            let prompt = context(&now, &notes, &goal_lines, &pending, &recent);
             match claude::one_shot(&target, &settings.model, SYSTEM, &prompt).await {
                 Ok(reply) => {
                     if let Some(text) = reply_to_nudge(&reply) {
@@ -178,9 +191,18 @@ mod tests {
 
     #[test]
     fn context_lists_what_it_knows() {
-        let c = context("2026-10-01T12:00", &["Likes tea".into()], &[], &["Drink water".into()]);
+        let c = context(
+            "2026-10-01T12:00",
+            &["Likes tea".into()],
+            &["[1] Pass the exam — due 2026-10-10 (in 9 days)".into()],
+            &[],
+            &["Drink water".into()],
+        );
         assert!(c.contains("Likes tea"));
         assert!(c.contains("Drink water"));
+        assert!(c.contains("Pass the exam"));
         assert!(!c.contains("Reminders already set"));
+        // Without goals, the section isn't there at all.
+        assert!(!context("2026-10-01T12:00", &["Likes tea".into()], &[], &[], &[]).contains("active goals"));
     }
 }

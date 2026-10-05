@@ -979,6 +979,69 @@ function browserSection(): HTMLElement {
   );
 }
 
+function goalsSection(): HTMLElement {
+  const list = h("div", { class: "reminder-list" });
+  const note = h("span", { class: "hint" });
+
+  async function refresh() {
+    const goals = ((await Bridge.goalsList()) ?? []).filter((g) => !g.done);
+    clear(list);
+    if (goals.length === 0) {
+      list.append(h("div", { class: "hint", text: t("No goals yet. Tell Mochi what you want to achieve, or add one here.") }));
+      return;
+    }
+    for (const g of goals) {
+      const done = g.steps.filter((s) => s.done).length;
+      const progress = g.steps.length ? `  ·  ${done}/${g.steps.length}` : "";
+      list.append(
+        h("div", { class: "reminder" },
+          h("span", { class: "when", text: g.due ?? t("no date") }),
+          h("span", { class: "what", text: `${g.title}${progress}` }),
+          h("button", {
+            title: t("Mark as done"),
+            text: "✓",
+            onclick: async () => { await Bridge.goalsComplete(g.id); void refresh(); },
+          }),
+          h("button", {
+            title: t("Delete"),
+            text: "×",
+            onclick: async () => { await Bridge.goalsDelete(g.id); void refresh(); },
+          }),
+        ),
+      );
+    }
+  }
+  void refresh();
+  // Mochi adds and updates them from the chat while this window is open.
+  window.setInterval(() => void refresh(), 15000);
+
+  const title = h("input", { type: "text", placeholder: t("A goal, e.g. Pass the calculus exam"), style: "flex:1 1 auto;min-width:0" }) as HTMLInputElement;
+  const due = h("input", { type: "date", title: t("Deadline (optional)") }) as HTMLInputElement;
+  const add = h("button", { text: t("Add") });
+  add.addEventListener("click", async () => {
+    if (!title.value.trim()) return;
+    try {
+      await Bridge.goalsAdd(title.value, due.value || null);
+      title.value = "";
+      due.value = "";
+      note.textContent = "";
+      void refresh();
+    } catch (err) {
+      note.textContent = String(err).replace(/^Error:\s*/, "");
+    }
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: t("Goals") })),
+    h("div", { class: "hint", text: t("Mochi keeps track of what you are working towards. Tell it a goal in the chat and it records it, ticks steps off as you report progress, and keeps your deadlines in mind.") }),
+    list,
+    h("div", { class: "row" }, title, due, add),
+    note,
+  );
+}
+
 function remindersSection(): HTMLElement {
   const list = h("div", { class: "reminder-list" });
 
@@ -1064,6 +1127,7 @@ async function main() {
     mochiSection(),
     transparencySection(),
     memorySection(),
+    goalsSection(),
     browserSection(),
     remindersSection(),
     generalSection(),

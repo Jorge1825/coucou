@@ -29,6 +29,20 @@ export interface MemoryNote {
   source: string;
 }
 
+export interface GoalStep {
+  text: string;
+  done: boolean;
+}
+
+export interface Goal {
+  id: number;
+  title: string;
+  /** YYYY-MM-DD, or null. */
+  due: string | null;
+  steps: GoalStep[];
+  done: boolean;
+}
+
 export interface Reminder {
   id: number;
   text: string;
@@ -108,6 +122,10 @@ export const Bridge = {
     callOrThrow<{ text: string; remembered: boolean }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
   chatCancel: () => call<void>("chat_cancel"),
+  goalsList: () => call<Goal[]>("goals_list"),
+  goalsAdd: (title: string, due: string | null) => callOrThrow<number>("goals_add", { title, due }),
+  goalsComplete: (id: number) => call<string>("goals_complete", { id }),
+  goalsDelete: (id: number) => call<void>("goals_delete", { id }),
   remindersList: () => call<Reminder[]>("reminders_list"),
   remindersDelete: (id: number) => call<void>("reminders_delete", { id }),
   memoryList: () => call<MemoryNote[]>("memory_list"),
